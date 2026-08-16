@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-面向 Python SDK 内置 JSON-RPC 运行时的无人值守编码 agent（智能体）组合。它有意不加载终端 UI、控制台日志记录器、批准界面或用户交互工具，因为 stdout 属于 SDK 协议，轮次由 SDK 驱动。
+面向 Python SDK 内置 JSON-RPC 运行时的无人值守编码 agent（智能体）组合。它不加载终端 UI、控制台日志记录器或批准界面，因为 stdout 属于 SDK 协议，轮次由 SDK 驱动。其用户问题提供方会把结构化 `interaction/request` 帧转发给调用方，由调用方决定答案。
 
 面向模型的工具为：
 
@@ -10,8 +10,11 @@
 - `read`、`write` 和 `edit`
 - `subagent`，使用一个在进程内以前台方式运行的 spawn 提供方
 - `todo_write`
+- `ask_user_question`，由嵌入式 SDK 调用方回答
 
 周边运行时还加载 JSONL 会话持久化和自动上下文压缩（context compaction）。`maxTokensAsSuccess` 将受 token 上限限制的模型轮次保留为已接受的评估结果，同时保留其 `max-tokens` 原因。
+
+默认组合同时挂载文件型 settings、credentials provider 和 `llm-pi-ai`，因此可以使用当前 dsh home 中配置的 provider 路由。SDK 调用方在 `initialize` 中选择路由，以及精确的 wire model id 或唯一的已配置显示名称；如果两者同时匹配，精确 id 优先，因此 `deepseek-v4-flash-ga` 会解析为配置中的 id `deepseek-v4-flash-ga-260731`。child 直接读取受管 settings 和 credentials 文件，不会接收环境中继承的凭据形式变量。
 
 ## 运行时环境
 
@@ -23,7 +26,7 @@
 | `DSH_CONTEXT_WINDOW` | 极简变体中为 `DSH_MODEL` 目录项记录的上下文容量 |
 | `DSH_MAX_TOKENS_AS_SUCCESS` | `true`（默认）接受受 token 上限限制的结果；`false` 将其报告为错误 |
 | `DSH_MODEL` | `minimal.py` 使用的默认模型；`--model` 优先 |
-| `DSH_SESSION_ROOT` | JSONL 会话目录 |
+| `DSH_SESSION_ROOT` | JSONL 会话目录；要让 runner session 在 Web host 中可见，请与 Web host 使用相同的 `$DSH_HOME/sessions` 根目录 |
 | `DSH_SYSTEM_PROMPT` | 由部署提供的编码人格 |
 
 通过 Python SDK 的 `cordis` 选项或 `DSH_CORDIS_CONFIG` 传入配置路径。内置可执行文件已携带此文件中指定的每个插件；目标机器无需 Node.js。

@@ -33,6 +33,8 @@
  *   arrives, then poll for the GO file before answering (deterministic
  *   cancel-during-handshake window).
  * - `FAKE_HANG_PROMPT`: never answer `session/prompt` (for timeout/dispose tests).
+ * - `FAKE_INTERACTION`: ask one structured caller question before completing
+ *   the prompt; the caller must answer `interaction/request`.
  * - `FAKE_STREAM_THEN_MALFORMED`: stream a text chunk for the prompt, then
  *   answer `{}` (no accepted) — same-pipe ordering makes the chunk arrive
  *   before the protocol failure (partial-output retention probe).
@@ -74,8 +76,20 @@ function notify(method: string, params: object): void {
 }
 
 let seq = 0
+let requestSeq = 0
+const pendingCallerRequests = new Map<string | number, {
+  resolve: (value: unknown) => void
+  reject: (error: Error) => void
+}>()
+
 function event(sessionId: string, type: string, data: object): void {
   notify('session.event', { sessionId, event: { type, seq: seq++, time: 0, data } })
+}
+
+function requestCaller(method: string, params: object): Promise<unknown> {
+  const id = `fake-caller-${requestSeq++}`
+  write({ jsonrpc: '2.0', id, method, params })
+  return new Promise((resolve, reject) => { pendingCallerRequests.set(id, { resolve, reject }) })
 }
 
 function assistantText(): string {
@@ -154,9 +168,25 @@ function sessionIdOf(params: Record<string, unknown> | undefined): string {
 }
 
 const reader = createInterface({ input: process.stdin })
-reader.on('line', (line) => {
+reader.on('line', (line) => { void handleLine(line) })
+
+async function handleLine(line: string): Promise<void> {
   if (line.trim().length === 0) return
-  const frame = JSON.parse(line) as { id?: string | number; method?: string; params?: Record<string, unknown> }
+  const frame = JSON.parse(line) as {
+    id?: string | number
+    method?: string
+    params?: Record<string, unknown>
+    result?: unknown
+    error?: { message?: string }
+  }
+  if (frame.method === undefined && frame.id !== undefined) {
+    const pending = pendingCallerRequests.get(frame.id)
+    if (pending === undefined) return
+    pendingCallerRequests.delete(frame.id)
+    if (frame.error !== undefined) pending.reject(new Error(frame.error.message ?? 'caller request failed'))
+    else pending.resolve(frame.result)
+    return
+  }
   if (frame.method === undefined || frame.id === undefined) return
   const respond = (result: object): void => { write({ jsonrpc: '2.0', id: frame.id, result }) }
   switch (frame.method) {
@@ -207,6 +237,25 @@ reader.on('line', (line) => {
         }],
       })
       notify('session.status', { sessionId, status: 'running' })
+      if (env.FAKE_INTERACTION !== undefined) {
+        try {
+          await requestCaller('interaction/request', {
+            requestId: 'fake-interaction-1',
+            sessionId,
+            questions: [{
+              id: 'mode',
+              question: 'Which mode should the scripted runtime use?',
+              options: [
+                { label: 'fast', description: 'Finish the scripted turn quickly.' },
+                { label: 'careful', description: 'Use the slower scripted path.' },
+              ],
+            }],
+          })
+        } catch (error) {
+          write({ jsonrpc: '2.0', id: frame.id, error: { code: -32001, message: error instanceof Error ? error.message : String(error) } })
+          return
+        }
+      }
       if (env.FAKE_STREAM_THEN_MALFORMED !== undefined) {
         event(sessionId, 'assistant/chunk', { turn: 0, step: 0, chunk: { type: 'text-delta', index: 0, text: 'streamed then cut short' } })
         respond({})
@@ -231,4 +280,4 @@ reader.on('line', (line) => {
     default:
       write({ jsonrpc: '2.0', id: frame.id, error: { code: -32603, message: `unknown method: ${frame.method}` } })
   }
-})
+}

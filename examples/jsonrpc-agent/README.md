@@ -2,7 +2,7 @@
 
 English | [中文](README.zh.md)
 
-The unattended coding-agent composition for the Python SDK's bundled JSON-RPC runtime. It intentionally loads no terminal UI, console logger, approval UI, or user-questions tool because stdout belongs to the SDK protocol and turns are driven by the SDK.
+The unattended coding-agent composition for the Python SDK's bundled JSON-RPC runtime. It loads no terminal UI, console logger, or approval UI because stdout belongs to the SDK protocol and turns are driven by the SDK. Its user-questions provider forwards structured `interaction/request` frames to a caller; the caller decides the answer.
 
 The model-facing tools are:
 
@@ -10,8 +10,11 @@ The model-facing tools are:
 - `read`, `write`, and `edit`
 - `subagent`, using one foreground in-process spawn provider
 - `todo_write`
+- `ask_user_question`, answered by the embedding SDK caller
 
 The surrounding runtime also loads JSONL session persistence and automatic context compaction. `maxTokensAsSuccess` keeps a token-limited model turn as an accepted evaluation result while preserving its `max-tokens` reason.
+
+The default composition mounts the file-backed settings and credential providers together with `llm-pi-ai`, so it can use provider routes configured in the active dsh home. The SDK caller selects the route and either its exact wire model id or a unique configured display name in `initialize`; exact ids win when both match, so `deepseek-v4-flash-ga` resolves to the configured id `deepseek-v4-flash-ga-260731`. The child reads the managed settings and credential documents directly and never receives ambient credential-shaped environment variables.
 
 ## Runtime environment
 
@@ -23,7 +26,7 @@ The surrounding runtime also loads JSONL session persistence and automatic conte
 | `DSH_CONTEXT_WINDOW` | Context capacity recorded for the `DSH_MODEL` catalog entry in the minimal variant |
 | `DSH_MAX_TOKENS_AS_SUCCESS` | `true` (default) accepts token-limited results; `false` reports them as errors |
 | `DSH_MODEL` | Default model used by `minimal.py`; `--model` takes precedence |
-| `DSH_SESSION_ROOT` | JSONL session directory |
+| `DSH_SESSION_ROOT` | JSONL session directory; use the same `$DSH_HOME/sessions` root as the Web host to make runner sessions visible there |
 | `DSH_SYSTEM_PROMPT` | Deployment-provided coding persona |
 
 Pass the config path through the Python SDK's `cordis` option or `DSH_CORDIS_CONFIG`. The bundled executable already carries every plugin named by this file; the target machine does not need Node.js.

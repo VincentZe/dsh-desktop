@@ -7,6 +7,7 @@
 
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import type { JsonRpcRequestHandler } from '@deepseek-ai/dsh-sdk-protocol'
 
 /** One server-to-client notification as received off the wire. */
 export interface HarnessNotification {
@@ -42,6 +43,8 @@ export interface HarnessClientOptions {
   disposeEofGraceMs?: number
   /** Termination confirmation window (ms) after SIGTERM/SIGKILL during `close()` (default 3000). */
   disposeGraceMs?: number
+  /** Handles structured requests initiated by the runtime, such as caller-owned questions. */
+  onRequest?: JsonRpcRequestHandler
 }
 
 /** Options for the high-level {@link DeepSeekHarness} wrapper. */

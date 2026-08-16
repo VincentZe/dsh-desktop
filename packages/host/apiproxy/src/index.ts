@@ -53,6 +53,8 @@ export interface Config {
    * @default 6
    */
   sessionExportCompressionLevel?: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9
+  /** Poll cadence for session logs owned by another DSH process. */
+  externalSessionPollMs?: number
   /**
    * Maximum physical size of a cold Session artifact eligible for blankness
    * verification. Zero disables probes.
@@ -77,6 +79,7 @@ export class ApiProxyService extends Service implements ApiProxy {
     sessionExportCompressionLevel: z.number().step(1).min(0).max(9)
       .default(DEFAULT_SESSION_LOG_COMPRESSION_LEVEL) as z<SessionLogCompressionLevel>,
     coldBlankProbeMaxBytes: z.natural().default(DEFAULT_COLD_BLANK_PROBE_MAX_BYTES),
+    externalSessionPollMs: z.number().step(1).min(1).default(500),
   })
 
   readonly sessions: ApiProxy['sessions']
@@ -106,6 +109,9 @@ export class ApiProxyService extends Service implements ApiProxy {
       ...(config.coldBlankProbeMaxBytes === undefined
         ? {}
         : { coldBlankProbeMaxBytes: config.coldBlankProbeMaxBytes }),
+      ...(config.externalSessionPollMs === undefined
+        ? {}
+        : { externalSessionPollMs: config.externalSessionPollMs }),
     })
     this.sessions = api.sessions
     this.subagents = api.subagents

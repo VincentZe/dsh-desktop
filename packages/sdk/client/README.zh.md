@@ -33,6 +33,8 @@ console.log(result.finalResponse)
 
 `HarnessClientOptions.env` 给定时整体替换子进程环境（`undefined` 原样继承父进程环境）；凭据策略归调用方——`dsh-subprocess` 的 `scrubbedParentEnv` 是面向隔离启动的共享擦除基底。
 
+`HarnessClientOptions.onRequest` 处理由运行时发起的请求。SDK 会把方法名和解码后的参数交给这个回调，并将其返回值写回 JSON-RPC 结果；嵌入 agent（智能体）可以在这里为 `interaction/request` 提供调用方策略。不设置时，该方法会以 JSON-RPC `-32601` 失败，而不会等待人类。
+
 ## 模型体验
 
 无，因为这是一个客户端进程库；模型运行在 spawn 出的运行时中，其体验由该运行时的 `cordis.yml` 所组合的插件决定。
@@ -46,4 +48,4 @@ console.log(result.finalResponse)
 - **无捆绑运行时解析**——调用方显式指定运行时可执行文件；打包可执行文件的发现留在 Python 侧，直到出现 TypeScript 发行版消费方。
 - **无轮次中取消**——协议层没有提示词取消方法；放弃轮次意味着关闭运行时（见协议的 [已知限制](../protocol/README.md)）。
 - **没有逐提示词结果或取消**——低层 `prompt()` 只返回入队回执；高层 `run()` 负责从回执收集到 idle，放弃该过程意味着关闭运行时。
-- **客户端→服务端通知与服务端→客户端请求**在协议两端都未实现；传输层为未来审批流保留了承载能力。
+- **只有已配置的服务端→客户端请求方法有明确含义**——传输层提供通用承载，而 `onRequest` 是调用方为结构化交互请求提供策略的入口。

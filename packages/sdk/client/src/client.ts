@@ -255,6 +255,7 @@ export class HarnessClient {
       this.transport?.close()
     })
     const transport = new JsonRpcLineTransport(child.stdout, child.stdin)
+    if (this.options.onRequest !== undefined) transport.onRequest(this.options.onRequest)
     transport.onNotification((method, params) => { this.dispatchNotification({ method, params }) })
     transport.start()
     this.transport = transport

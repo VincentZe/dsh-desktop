@@ -746,6 +746,8 @@ export interface Config {
    * @default 6
    */
   sessionExportCompressionLevel?: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9
+  /** Poll cadence for session logs owned by another DSH process. */
+  externalSessionPollMs?: number
   /**
    * Maximum physical size of a cold Session artifact eligible for blankness
    * verification. Zero disables probes.
@@ -1533,6 +1535,8 @@ export interface Config {
 export interface JsonRpcConfig {
   /** Report max-token turn/subagent termination as a successful SDK result. */
   maxTokensAsSuccess?: boolean
+  /** Maximum time to wait for a settings-backed provider route during initialization. */
+  adapterReadyTimeoutMs?: number
   /** Transport input override; production uses `process.stdin`. */
   input?: Readable
   /** Transport output override; production uses `process.stdout`. */

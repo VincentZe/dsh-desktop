@@ -13,13 +13,17 @@ import * as agentCore from '@deepseek-ai/dsh-agent-spine-demo'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import * as LlmDeepSeek from '@deepseek-ai/dsh-llm-deepseek'
 import SubagentRuntime, { type SubagentResult, type SubagentRunEndInfo } from '@deepseek-ai/dsh-subagent'
-import type { JsonRpcTransportPeer } from '@deepseek-ai/dsh-sdk-protocol'
+import type { InteractionRequestParams, JsonRpcTransportPeer } from '@deepseek-ai/dsh-sdk-protocol'
+import type { AskUserQuestionRequest, UserQuestionProvider } from '@deepseek-ai/dsh-user-questions'
 import { HarnessSdkJsonRpcServer } from '../src/index.ts'
 
 class FakeTransport implements JsonRpcTransportPeer {
   notifications: { method: string; params?: Record<string, unknown> }[] = []
 
+  constructor(private readonly requestHandler?: (method: string, params: object) => Promise<unknown>) {}
+
   async request(method: string, params: object): Promise<unknown> {
+    if (this.requestHandler !== undefined) return this.requestHandler(method, params)
     throw new Error(`the SDK server should not call host JSON-RPC method ${method} with ${JSON.stringify(params)}`)
   }
 
@@ -815,6 +819,55 @@ describe('HarnessSdkJsonRpcServer', () => {
     }
   })
 
+  it('waits for a settings-backed provider route to register during initialization', async () => {
+    let ready = false
+    let notify: (() => void) | undefined
+    const ctx = {
+      get: (key: string) => key === 'llm'
+        ? {
+          listProviders: () => ready ? [{ id: 'late-provider', name: 'Late provider' }] : [],
+          listModels: async () => [],
+        }
+        : undefined,
+      on: (_event: string, listener: () => void) => {
+        notify = listener
+        return () => { notify = undefined }
+      },
+    } as unknown as Context
+    const server = new HarnessSdkJsonRpcServer(ctx, new FakeTransport(), { adapterReadyTimeoutMs: 1000 })
+    const initialization = server.initialize({ cwd: '.', provider: 'late-provider', model: 'late-model' })
+    ready = true
+    notify?.()
+    await expect(initialization).resolves.toMatchObject({ serverInfo: { name: 'deepseek-harness-sdk-runtime' } })
+  })
+
+  it('maps an advertised model name to its provider-owned id before creating a session', async () => {
+    const agent = { id: SessionId('model-name-session'), followup: vi.fn() } as unknown as Agent
+    const create = vi.fn(async () => ({ agent, dispose: () => Promise.resolve() }))
+    const ctx = {
+      get: (key: string) => key === 'llm'
+        ? {
+          listProviders: () => [{ id: 'vocano', name: 'Volcano' }],
+          listModels: async () => [{ provider: 'vocano', id: 'wire-model', name: 'Friendly model' }],
+        }
+        : undefined,
+      on: () => () => {},
+      agents: { create, get: () => agent },
+    } as unknown as Context
+    const server = new HarnessSdkJsonRpcServer(ctx, new FakeTransport())
+
+    await server.initialize({ cwd: '.', provider: 'vocano', model: 'Friendly model' })
+    await server.handleRequest('session/prompt', {
+      sessionId: 'model-name-session',
+      contentBlocks: [{ type: 'text', text: 'hello' }],
+    })
+
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      agentOptions: { provider: 'vocano', model: 'wire-model' },
+    }))
+    await server.shutdown()
+  })
+
   it.each([0, -1, 1.5, Number.NaN, Number.MAX_SAFE_INTEGER + 1])(
     'rejects invalid initialize maxTokens %s at the wire boundary',
     async (maxTokens) => {
@@ -868,6 +921,30 @@ describe('HarnessSdkJsonRpcServer', () => {
     }
   })
 
+  it('registers a caller-backed user-question provider when the capability is present', async () => {
+    let provider: UserQuestionProvider | undefined
+    const ctx = {
+      on: vi.fn(() => () => undefined),
+      agents: { create: vi.fn(), get: () => undefined },
+      get: vi.fn((key: string) => key === 'userQuestions'
+        ? { registerProvider: (value: UserQuestionProvider) => { provider = value; return () => undefined } }
+        : undefined),
+    } as unknown as Context
+    const transport = new FakeTransport(async (method, params) => {
+      expect(method).toBe('interaction/request')
+      const request = params as InteractionRequestParams
+      return { requestId: request.requestId, answers: [{ id: 'mode', selected: ['fast'] }] }
+    })
+    const server = new HarnessSdkJsonRpcServer(ctx, transport)
+    const request: AskUserQuestionRequest = {
+      questions: [{ id: 'mode', question: 'Which mode?', options: [{ label: 'fast' }] }],
+    }
+
+    expect(provider).toBeDefined()
+    await expect(provider?.ask(request)).resolves.toEqual({ answers: [{ id: 'mode', selected: ['fast'] }] })
+    await server.shutdown()
+  })
+
   it('coalesces concurrent session creation and retries a failed creation', async () => {
     let resolveShared: ((handle: AgentHandle) => void) | undefined
     const sharedCreation = new Promise<AgentHandle>((resolve) => { resolveShared = resolve })
@@ -910,7 +987,7 @@ describe('HarnessSdkJsonRpcServer', () => {
     const ctx = {
       on: vi.fn(() => () => undefined),
       agents: { create, get: () => undefined },
-      get: () => ({ listProviders: () => [{ id: 'mock', name: 'Mock' }] }),
+      get: () => ({ listProviders: () => [{ id: 'mock', name: 'Mock' }], listModels: async () => [] }),
     } as unknown as Context
     const server = new HarnessSdkJsonRpcServer(ctx, new FakeTransport()) as unknown as {
       initialize(params: { cwd: string; provider: string; model: string; maxTokens?: number }): Promise<unknown>

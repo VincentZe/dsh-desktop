@@ -33,6 +33,8 @@ The protocol client under the owned-run API: explicit `start()`/`initialize()`/`
 
 `HarnessClientOptions.env` replaces the child environment entirely when given (`undefined` inherits the parent's); callers own credential policy — `scrubbedParentEnv` from `dsh-subprocess` is the shared scrub base for isolation-minded launches.
 
+`HarnessClientOptions.onRequest` handles requests initiated by the runtime. The SDK passes the method name and decoded params to this callback and writes its resolved value back as the JSON-RPC result. The callback is where an embedding agent supplies caller-owned policy for `interaction/request`; leaving it unset makes that method fail with JSON-RPC `-32601` instead of waiting for a human.
+
 ## Model Experience
 
 None, as this is a client-process library; the model runs in the spawned runtime, whose experience is owned by the plugins its `cordis.yml` composes.
@@ -46,4 +48,4 @@ None; this package neither assembles nor sends a provider request.
 - **No bundled-runtime resolution** — callers name the runtime executable explicitly; packaged-executable discovery stays Python-side until a TypeScript distribution consumer exists.
 - **No mid-turn cancel** — the wire has no prompt-cancel method; abandoning a turn means closing the runtime (see the protocol's [Known Limitations](../protocol/README.md)).
 - **No per-prompt result or cancel** — low-level `prompt()` returns only an enqueue receipt; high-level `run()` owns receipt-to-idle collection, and abandoning it means closing the runtime.
-- **Client→server notifications and server→client requests are unimplemented** on both wire ends; the transport carries them for future approval flows.
+- **Only configured server→client request methods are meaningful** — the transport carries them generically, while `onRequest` is the caller-owned policy hook for the structured interaction request.

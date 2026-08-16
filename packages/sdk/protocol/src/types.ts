@@ -18,7 +18,9 @@ export interface InitializeParams {
   cwd: string
   /** Provider route every SDK-created agent runs on. */
   provider: string
-  /** Model name every SDK-created agent runs on (the server may mount a fallback adapter; see `HarnessSdkJsonRpcServer.initialize`). */
+  /** Provider-owned model id or unique advertised model name for every
+   * SDK-created agent (the server may mount a fallback adapter; see
+   * `HarnessSdkJsonRpcServer.initialize`). */
   model: string
   /** Optional positive output-token cap inherited by SDK-created agents and their in-process descendants. */
   maxTokens?: number
@@ -102,4 +104,12 @@ export interface HarnessSdkRequestMap {
   'initialize': { params: InitializeParams; result: InitializeResult }
   'session/prompt': { params: SessionPromptParams; result: SessionPromptResult }
   'shutdown': { params: undefined; result: Record<string, never> }
+}
+
+/** Server-to-caller request methods initiated by the runtime. */
+export interface HarnessSdkServerRequestMap {
+  'interaction/request': {
+    params: import('./interaction.ts').InteractionRequestParams
+    result: import('./interaction.ts').InteractionResponseParams
+  }
 }

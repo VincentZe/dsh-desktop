@@ -6,11 +6,11 @@
 
 ## 组装
 
-`inject: ['agents']`。服务器按 `sessionId` 获取或创建一个 agent。只有服务对生命周期建立快照时记录的 `local` 标志为 true，服务器才会转发 subagent 完成事件；提供方名称、子级 id 和持久化谱系均不能证明本地性。已注册的适配器优先；尚无适配器负责的 `deepseek-official` 路由会挂载 `dsh-llm-deepseek`，任何其他尚无适配器负责的提供方都会导致初始化失败。其他能力由外围 `cordis.yml` 提供。
+`inject: ['agents']`。服务器按 `sessionId` 获取或创建一个 agent（智能体）。存在 `userQuestions` 时，服务器会注册一个将 `interaction/request` 发送给 SDK 调用方并等待结构化答案的提供方；服务器不会渲染问题。只有服务对生命周期建立快照时记录的 `local` 标志为 true，服务器才会转发 subagent 完成事件；提供方名称、子级 id 和持久化谱系均不能证明本地性。已注册的适配器优先；尚无适配器负责的 `deepseek-official` 路由会挂载 `dsh-llm-deepseek`，其他 provider 可以在配置的 settings 启动窗口内动态出现，窗口结束后仍未拥有的 provider 才会导致初始化失败。其他能力由外围 `cordis.yml` 提供。
 
 ## 配置
 
-`maxTokensAsSuccess` 默认为 `false`，且只影响 `subagent.finished` 上由部署映射的状态；根会话提示词没有提示词级状态。`JsonRpcConfig.input`、`output` 和 `exit` 是仅供运行时使用的传输钩子；生产环境使用进程 stdio 和 `process.exit`。
+`maxTokensAsSuccess` 默认为 `false`，且只影响 `subagent.finished` 上由部署映射的状态；根会话提示词没有提示词级状态。`adapterReadyTimeoutMs` 默认为 `1000`，限制 `initialize` 等待 settings-backed 路由发布 `llm/adapters-updated` 的时间；没有动态 adapter 启动的部署可设为 `0`。`JsonRpcConfig.input`、`output` 和 `exit` 是仅供运行时使用的传输钩子；生产环境使用进程 stdio 和 `process.exit`。
 
 ## stdout 即协议
 
@@ -22,7 +22,9 @@ Stdout 只承载 JSON-RPC 帧。部署不得组合 stdout logger；诊断应写�
 
 ## 协议说明
 
-`initialize.serverInfo.name` 的协议稳定值为 `deepseek-harness-sdk-runtime`。可选的正整数 `initialize.maxTokens` 会成为每个 SDK 创建的 agent 及其进程内后代的请求输出上限；非法值会使初始化失败，省略时则不发送 SDK 上限，并应用所选适配器或提供方路由的默认值。`session/prompt` 将一条带标识的用户消息排入队列，并立即返回 `{ messageId }`。服务器将每个持久事实作为 `session.event` 流式发出，并将整个 agent 生命周期的每次状态转换作为 `session.status` 发出；它不会把某条助手消息或 `turn/end` 归属于该提示词。同一会话上的独立请求可以继续排入更多工作。持久化根目录和 persona 由 `cordis.yml` 提供。
+`initialize.serverInfo.name` 的协议稳定值为 `deepseek-harness-sdk-runtime`。`initialize.model` 接受 provider 所有的模型 id 或唯一的已公布模型名称；如果两者同时匹配，精确 id 优先，后续请求使用解析后的 id。可选的正整数 `initialize.maxTokens` 会成为每个 SDK 创建的 agent 及其进程内后代的请求输出上限；非法值会使初始化失败，省略时则不发送 SDK 上限，并应用所选适配器或提供方路由的默认值。`session/prompt` 将一条带标识的用户消息排入队列，并立即返回 `{ messageId }`。服务器将每个持久事实作为 `session.event` 流式发出，并将整个 agent 生命周期的每次状态转换作为 `session.status` 发出；它不会把某条助手消息或 `turn/end` 归属于该提示词。同一会话上的独立请求可以继续排入更多工作。持久化根目录和 persona 由 `cordis.yml` 提供。
+
+外围配置加载 `dsh-user-questions` 时，面向模型的 `ask_user_question` 调用会变成服务端→调用方的 `interaction/request`。其参数包含请求 id、可选的会话 id、问题文本、选项和多选标志；调用方返回 `{ requestId, answers }`。工具恢复前，服务器会根据问题 id 和问题提供的选项标签校验请求与回答。
 
 ## 模型体验
 

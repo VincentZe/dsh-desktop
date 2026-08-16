@@ -150,6 +150,25 @@ ACP 自动化服务器通过 JSON-RPC stdio 提供全新 agent 会话，同样�
 pnpm run demo:acp
 ```
 
+### 进程外 subagent runner
+
+`pnpm dsh:subagent` 是仓库级的单任务监督器。它使用纯库 `@deepseek-ai/dsh-sdk-client` 启动构建后的 JSON-RPC 运行时，发送一条 prompt，应用墙钟超时，关闭 child，并输出一条 JSON 结果，其中包含最终响应、停止状态、Git 前后状态以及 `git diff --check` 证据。
+
+进度会通过 stderr 按 JSON Lines 输出：child 启动、选定的 session/turn/tool 活动、周期性空闲 heartbeat、调用方交互请求以及最终状态都会产生事件。进度中不包含任务文本、模型正文或工具参数；交互事件只包含结构化问题和选项，由调用方策略返回答案，不会转发给面向人类的 UI。stdout 仍只保留最终结果 JSON，因此 agent 可以在 child 运行期间读取进度，结束后再无歧义地解析结果。使用 `--quiet` 可以关闭进度，使用 `--progress-ms` 可以调整空闲 heartbeat 间隔。
+
+这个 runner 不是 Cordis 插件，也不会从 `cordis.yml` 加载。child 运行时才是插件组合：`examples/jsonrpc-agent/cordis.yml` 加载 agent、工具、用户问题 capability、subprocess provider 和 `dsh-subagent-spawn-in-process` provider。可选的 `dsh-subagent-dsh-sdk` 包本身是 Cordis provider，供会委派到另一个 DSH SDK 运行时的配置使用。SDK client 同样是库，不会向调用方的 Cordis context 注册任何内容。
+
+runner 默认把 child 的 `DSH_SESSION_ROOT` 设置为 `$DSH_HOME/sessions`，因此使用同一个 DSH home 的 Web host 可以列出并观察 child session。Web host 对外部日志采用只读观察：通过 `session.history` 读取已有历史，在 Web stream 连接期间发送追加事件，不会 resume child，也不会伪造 running 状态。host 使用其他持久化根目录时，请用 `--session-root` 指定相同目录。
+
+首次调用前先构建 child 运行时。child 不会隐式继承凭据；只转发它需要的变量：
+
+```sh
+pnpm run build
+pnpm dsh:subagent --forward-env DEEPSEEK_API_KEY -- "inspect the workspace and report actionable findings"
+```
+
+可以使用 `--cwd`、`--session-root`、`--config`、`--provider`、`--model`、`--max-tokens` 和 `--timeout-ms` 修改 child 请求。默认运行时是 JSON-RPC demo；`--runtime-arg` 与 `--command` 可监督兼容的 JSON-RPC 运行时。CLI 模式在交互进度事件之后从 stdin 接收一行 JSON 答案，并使用事件中的 `requestId`；程序化包装器应直接向 `executeRunnerRequest` 提供 `RunnerInteractionHandler`。任务完成或因达到 max-token 上限时退出码为 0；child 失败或超时时退出码为 1 并输出 JSON 结果；runner 参数无效时退出码为 2，并将用法输出到 stderr。完整选项约定保存在 [scripts/dsh-subagent-runner.ts](../scripts/dsh-subagent-runner.ts)。这使 runner 适合接入 agent 侧的委派包装；它不是 Cordis 插件，也不会注册 Codex 原生 subagent 任务。
+
 ### TODO 标记
 
 请使用以下三种注释标签之一标记代码中的已知问题，按紧急程度排序：

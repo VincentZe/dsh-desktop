@@ -109,9 +109,13 @@ import {
   inspectApiRemoteSession,
 } from '@deepseek-ai/dsh-api-remotes'
 import { canOpenNativePath, openNativePath, openNativeTextFile } from './native-path-opener.ts'
+import { ExternalSessionObserver } from './external-session-observer.ts'
 
 /** Page size when history is called without maxMessages. */
 const DEFAULT_MAX_MESSAGES = 50
+
+/** Default detached-session observation cadence while a Web stream is open. */
+const DEFAULT_EXTERNAL_SESSION_POLL_MS = 500
 
 /**
  * Non-model settings namespaces intentionally served to the Web client. The
@@ -505,7 +509,12 @@ function jobViews(snapshots: readonly JobSnapshot[]): JobView[] {
  * (list-hidden, reusable).
  */
 function sessionBlank(session: Session): boolean {
-  return !session.events.some(event => event.type === 'turn/start')
+  return sessionBlankEvents(session.events)
+}
+
+/** Whether a detached event log has opened a model turn. */
+function sessionBlankEvents(events: readonly SessionEvent[]): boolean {
+  return !events.some(event => event.type === 'turn/start')
 }
 
 /** Advance the Session-list hint projection by one committed event. */
@@ -659,6 +668,8 @@ export interface ApiProxyDefaults {
   sessionExportCompressionLevel?: SessionLogCompressionLevel
   /** Maximum artifact size eligible for one cold blankness read. */
   coldBlankProbeMaxBytes?: number
+  /** Detached session-log poll cadence while a Web event stream is connected. */
+  externalSessionPollMs?: number
   /**
    * Whether handing a path to the native opener can work at all — the
    * `hasDocument` capability the preset roster reports, and the switch
@@ -1130,6 +1141,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
   const pendingQuestions = new Map<RpcId, PendingQuestion>()
   const pendingApprovals = new Map<RpcId, PendingApproval>()
   const muxQueues = new Set<FrameQueue<RpcRequest<MuxFrame>>>()
+  const hostQueues = new Set<FrameQueue<RpcRequest<HostFrame>>>()
   const imageAdmissionChains = new WeakMap<Agent, Promise<void>>()
 
   /** Serialize image admission with model selection for one agent. */
@@ -1275,6 +1287,48 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
     const envelope = frame(payload)
     for (const queue of muxQueues) queue.push(envelope)
   }
+
+  /** Send one transient frame to every connected host stream. */
+  function broadcastHost(payload: HostFrame): void {
+    const envelope = frame(payload)
+    for (const queue of hostQueues) queue.push(envelope)
+  }
+
+  function externalSessionAdded(meta: SessionHeader, events: readonly SessionEvent[]): HostFrame {
+    return {
+      type: 'host/session-added',
+      sessionId: meta.id,
+      blank: sessionBlankEvents(events),
+      ...sessionListFields(meta, events),
+    }
+  }
+
+  /** Keep the observer active only while at least one client can receive it. */
+  function startExternalSessionObservation(): void {
+    const persistence = ctx.get('sessionPersistence')
+    if (persistence === undefined || typeof persistence.listSnapshots !== 'function') return
+    externalSessionObserver.start()
+  }
+
+  function stopExternalSessionObservationIfUnused(): void {
+    if (muxQueues.size === 0 && hostQueues.size === 0) externalSessionObserver.stop()
+  }
+
+  const externalSessionObserver = new ExternalSessionObserver({
+    persistence: () => {
+      const persistence = ctx.get('sessionPersistence')
+      return persistence === undefined || typeof persistence.listSnapshots !== 'function' ? undefined : persistence
+    },
+    liveSessions: () => ctx.sessions.list(),
+    pollIntervalMs: defaults.externalSessionPollMs ?? DEFAULT_EXTERNAL_SESSION_POLL_MS,
+    warn: (message) => { ctx.logger.warn(message) },
+    onSessionDiscovered: (meta, events) => {
+      broadcastHost(externalSessionAdded(meta, events))
+    },
+    onEvents: (meta, events) => {
+      for (const event of events) broadcast({ type: 'session/event', sessionId: meta.id, event })
+    },
+  })
 
   // Projection change feed → session/projection push frames. The carrier
   // mints the wire frame (the Service Definition package holds no wire vocabulary); the
@@ -3430,6 +3484,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
       mux(_request, signal) {
         const queue = new FrameQueue<RpcRequest<MuxFrame>>()
         muxQueues.add(queue)
+        startExternalSessionObservation()
         for (const session of ctx.sessions.list()) {
           subscribeSession(queue, session)
         }
@@ -3527,12 +3582,18 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         ]
         return queue.iterate(signal, () => {
           muxQueues.delete(queue)
+          stopExternalSessionObservationIfUnused()
           for (const dispose of disposers) dispose()
         })
       },
 
       host(_request, signal) {
         const queue = new FrameQueue<RpcRequest<HostFrame>>()
+        hostQueues.add(queue)
+        startExternalSessionObservation()
+        for (const { meta, events } of externalSessionObserver.knownSessions()) {
+          queue.push(frame(externalSessionAdded(meta, events)))
+        }
         const committedWorkspaces = ctx.workspaceRegistry.list()
         const committedWorkspaceIds = new Set(
           committedWorkspaces.map(workspace => String(workspace.id)),
@@ -3632,7 +3693,11 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             }),
           )),
         ]
-        return queue.iterate(signal, () => { for (const dispose of disposers) dispose() })
+        return queue.iterate(signal, () => {
+          hostQueues.delete(queue)
+          stopExternalSessionObservationIfUnused()
+          for (const dispose of disposers) dispose()
+        })
       },
     },
 

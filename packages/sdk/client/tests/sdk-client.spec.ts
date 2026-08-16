@@ -126,6 +126,40 @@ describe('DeepSeekHarness', () => {
     await harness.close()
   })
 
+  it('routes a server interaction request to the caller and resumes the same turn', async () => {
+    const interactions: { method: string; params: Record<string, unknown> }[] = []
+    const harness = harnessWith({ FAKE_INTERACTION: '1', FAKE_TEXT: 'after caller decision' }, {
+      onRequest: async (method: string, params: Record<string, unknown>) => {
+        interactions.push({ method, params })
+        const requestId = params.requestId
+        if (typeof requestId !== 'string') throw new Error('interaction request id is not a string')
+        return {
+          requestId,
+          answers: [{ id: 'mode', selected: ['fast'] }],
+        }
+      },
+    })
+
+    const result = await harness.run('choose a mode')
+
+    expect(result.finalResponse).toBe('after caller decision')
+    expect(interactions).toEqual([{
+      method: 'interaction/request',
+      params: {
+        requestId: 'fake-interaction-1',
+        sessionId: result.sessionId,
+        questions: [{
+          id: 'mode',
+          question: 'Which mode should the scripted runtime use?',
+          options: [
+            { label: 'fast', description: 'Finish the scripted turn quickly.' },
+            { label: 'careful', description: 'Use the slower scripted path.' },
+          ],
+        }],
+      },
+    }])
+  })
+
   it('keeps events root-scoped while streaming notifications for the session tree', async () => {
     const harness = harnessWith({ FAKE_SUBAGENT: '1' })
     const seen: HarnessNotification[] = []

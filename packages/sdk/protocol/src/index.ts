@@ -9,10 +9,12 @@
  */
 
 export { JsonRpcLineTransport, JsonRpcResponseError } from './transport.ts'
-export type { JsonRpcTransportPeer } from './transport.ts'
+export type { JsonRpcRequestHandler, JsonRpcTransportPeer } from './transport.ts'
+export { parseInteractionRequest, parseInteractionResponse } from './interaction.ts'
 export type {
   HarnessSdkNotificationMap,
   HarnessSdkRequestMap,
+  HarnessSdkServerRequestMap,
   InitializeParams,
   InitializeResult,
   SdkRunStatus,
@@ -23,3 +25,4 @@ export type {
   SubagentFinishedNotification,
   SubagentStartedNotification,
 } from './types.ts'
+export type { InteractionRequestParams, InteractionResponseParams } from './interaction.ts'

@@ -150,6 +150,25 @@ The ACP automation server exposes fresh agent sessions over JSON-RPC stdio and a
 pnpm run demo:acp
 ```
 
+### Out-of-process subagent runner
+
+`pnpm dsh:subagent` is a repository-level supervisor for one child task. It uses the pure `@deepseek-ai/dsh-sdk-client` library to launch the built JSON-RPC runtime, sends one prompt, applies a wall-clock timeout, closes the child, and prints one JSON result containing the final response, stop status, Git before/after state, and `git diff --check` evidence.
+
+Progress is emitted as one JSON object per line on stderr: startup, selected session/turn/tool activity, periodic idle heartbeats, caller interaction requests, and the terminal result. It excludes the task text, model text, and tool arguments. An interaction record contains only the structured question and options; the caller policy returns an answer without forwarding the question to a human-facing UI. Stdout remains reserved for the final result JSON, so an agent can keep the child process open, read progress while it runs, and parse the final result without mixing the two streams. Use `--quiet` to suppress progress or `--progress-ms` to change the idle heartbeat interval.
+
+The runner is not a Cordis plugin and is not loaded from `cordis.yml`. The child runtime is the plugin composition: `examples/jsonrpc-agent/cordis.yml` loads the agent, tools, user-question capability, subprocess provider, and the `dsh-subagent-spawn-in-process` provider. The optional `dsh-subagent-dsh-sdk` package is itself a Cordis provider for configurations that delegate to another DSH SDK runtime. The SDK client is also a library, so it registers nothing on the caller's Cordis context.
+
+The runner sets the child `DSH_SESSION_ROOT` to `$DSH_HOME/sessions` by default, so a Web host using the same DSH home can list and observe the child session. Use `--session-root` when the host uses another persistence root. The Web host observes external logs as read-only sessions: it reads the existing history through `session.history`, sends appended events while a Web stream is connected, and does not resume the child or claim a running status.
+
+Build the child runtime before the first invocation. Child credentials are not inherited implicitly; forward only the variables the child needs:
+
+```sh
+pnpm run build
+pnpm dsh:subagent --forward-env DEEPSEEK_API_KEY -- "inspect the workspace and report actionable findings"
+```
+
+Use `--cwd`, `--session-root`, `--config`, `--provider`, `--model`, `--max-tokens`, and `--timeout-ms` to change the child request. The default runtime uses the JSON-RPC demo; `--runtime-arg` and `--command` allow a compatible JSON-RPC runtime to be supervised. In CLI mode, the runner accepts one JSON answer line on stdin after an interaction progress record, using the emitted `requestId`; a programmatic wrapper should provide `RunnerInteractionHandler` directly to `executeRunnerRequest`. A completed or max-token-limited task exits 0. A child failure or timeout exits 1 with a JSON result; invalid runner arguments exit 2 with usage text on stderr. The full option contract is kept in [scripts/dsh-subagent-runner.ts](../scripts/dsh-subagent-runner.ts). This makes the runner suitable for an agent-side delegation wrapper; it is not a Cordis plugin and does not register a native Codex subagent task.
+
 ### TODO markers
 
 Use one of three comment tags to flag known issues in the code, ordered by urgency:
