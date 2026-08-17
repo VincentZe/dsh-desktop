@@ -4,9 +4,10 @@ English | [中文](README.zh.md)
 
 The unattended coding-agent composition for the Python SDK's bundled JSON-RPC runtime. It loads no terminal UI, console logger, or approval UI because stdout belongs to the SDK protocol and turns are driven by the SDK. Its user-questions provider forwards structured `interaction/request` frames to a caller; the caller decides the answer.
 
-The model-facing tools are:
+The model-facing shell tool follows the host platform: `bash` on POSIX and
+`pwsh` on Windows. Both are foreground-only and use the workspace-write
+policy supplied by the runner. The other model-facing tools are:
 
-- `bash`, foreground only
 - `read`, `write`, and `edit`
 - `subagent`, using one foreground in-process spawn provider
 - `todo_write`
@@ -22,7 +23,9 @@ The default composition mounts the file-backed settings and credential providers
 |---|---|
 | `DEEPSEEK_API_KEY` | Credential passed to the OpenAI-compatible host endpoint |
 | `DEEPSEEK_BASE_URL` | Host endpoint used by `dsh-llm-deepseek` |
-| `DSH_CWD` | Agent workspace for bash and filesystem tools |
+| `DSH_CWD` | Agent workspace for the shell and filesystem tools |
+| `DSH_PERMISSION_MODE` | Default child file policy: `read-only`, `workspace-write`, or `danger-full-access` |
+| `DSH_APPROVAL_POLICY` | Default child approval policy: `ask` or `never` |
 | `DSH_CONTEXT_WINDOW` | Context capacity recorded for the `DSH_MODEL` catalog entry in the minimal variant |
 | `DSH_MAX_TOKENS_AS_SUCCESS` | `true` (default) accepts token-limited results; `false` reports them as errors |
 | `DSH_MODEL` | Default model used by `minimal.py`; `--model` takes precedence |

@@ -4,9 +4,10 @@
 
 面向 Python SDK 内置 JSON-RPC 运行时的无人值守编码 agent（智能体）组合。它不加载终端 UI、控制台日志记录器或批准界面，因为 stdout 属于 SDK 协议，轮次由 SDK 驱动。其用户问题提供方会把结构化 `interaction/request` 帧转发给调用方，由调用方决定答案。
 
-面向模型的工具为：
+面向模型的 shell 工具随主机平台选择：POSIX 使用 `bash`，Windows 使用
+`pwsh`。两者都只允许前台执行，并使用 runner 提供的 workspace-write 策略。
+其他面向模型的工具为：
 
-- `bash`，仅前台
 - `read`、`write` 和 `edit`
 - `subagent`，使用一个在进程内以前台方式运行的 spawn 提供方
 - `todo_write`
@@ -22,7 +23,9 @@
 |---|---|
 | `DEEPSEEK_API_KEY` | 传给 OpenAI 兼容宿主端点的凭据 |
 | `DEEPSEEK_BASE_URL` | `dsh-llm-deepseek` 使用的宿主端点 |
-| `DSH_CWD` | bash 和文件系统工具使用的 agent workspace |
+| `DSH_CWD` | shell 和文件系统工具使用的 agent workspace |
+| `DSH_PERMISSION_MODE` | 默认 child 的文件策略：`read-only`、`workspace-write` 或 `danger-full-access` |
+| `DSH_APPROVAL_POLICY` | 默认 child 的审批策略：`ask` 或 `never` |
 | `DSH_CONTEXT_WINDOW` | 极简变体中为 `DSH_MODEL` 目录项记录的上下文容量 |
 | `DSH_MAX_TOKENS_AS_SUCCESS` | `true`（默认）接受受 token 上限限制的结果；`false` 将其报告为错误 |
 | `DSH_MODEL` | `minimal.py` 使用的默认模型；`--model` 优先 |

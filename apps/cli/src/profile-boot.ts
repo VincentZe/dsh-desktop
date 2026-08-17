@@ -12,6 +12,7 @@
  */
 
 import { writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { FiberState, type Context } from '@deepseek-ai/cordis'
@@ -39,6 +40,13 @@ import { provideCmdline } from '@deepseek-ai/dsh-cmdline'
 import { createProcessShutdown, type ProcessShutdown } from './process-shutdown.ts'
 
 const NAME = 'dsh'
+const require = createRequire(import.meta.url)
+
+/** Bundle layers compiled into the fixed Web executable, in application order. */
+const FIXED_WEB_BUNDLES = [
+  '@deepseek-ai/dsh-base/cordis.patch.yml',
+  '@deepseek-ai/dsh-web-app/cordis.patch.yml',
+] as const
 
 /**
  * The home-level user patch layer (`$DSH_HOME/cordis.patch.yml`), applied
@@ -65,6 +73,19 @@ const PROFILE_ROOT_CONFIG = `# dsh profile root — an empty entry list. The tre
 
 /** Root config filename inside a profile directory. */
 export const PROFILE_ROOT_FILENAME = 'cordis.yml'
+
+/** Read-only empty root shipped beside the fixed Web runtime's package modules. */
+const FIXED_WEB_ROOT_CONFIG = fileURLToPath(new URL('../config/fixed-web/cordis.yml', import.meta.url))
+
+/**
+ * Resolve the shipped Web patch files from the running dsh installation.
+ * The fixed executable packages these files with its dependency closure, so
+ * this list is independent of `$DSH_HOME` and cannot be extended at runtime.
+ * @returns absolute patch paths in the fixed Web composition order.
+ */
+export function fixedWebPatchPaths(): readonly string[] {
+  return FIXED_WEB_BUNDLES.map(specifier => require.resolve(specifier))
+}
 
 /**
  * Resolve the telemetry opt-out switch into its boot patch. ANY non-empty
@@ -111,11 +132,6 @@ interface ComposedProfile {
   homePatches: PatchOptions[]
   /** Layers above the user layers on a live reload: `--patch` overlays and the telemetry switch. */
   overlays: PatchOptions[]
-  /**
-   * id → row of the composed tree (bundles + user layers + overlays), for the
-   * launcher's own row checks.
-   */
-  rows: ReadonlyMap<string, EntryOptions>
 }
 
 /** The full patch stack of one composed profile, in application order. */
@@ -126,6 +142,33 @@ function allPatches(composed: ComposedProfile): PatchOptions[] {
     ...composed.homePatches,
     ...composed.overlays,
   ]
+}
+
+/** Return launcher-owned rows that are fixed by the shipped CLI, not by a user profile. */
+function launcherPatches(patches: PatchOptions[]): PatchOptions[] {
+  const rows = new Map<string, EntryOptions>()
+  for (const row of composeEntries([patches])) {
+    if (typeof row.id === 'string') rows.set(row.id, row)
+  }
+  const result: PatchOptions[] = []
+  const presetRow = rows.get('agent-presets')
+  if (presetRow !== undefined) {
+    result.push({
+      id: 'agent-presets',
+      config: {
+        ...(presetRow.config ?? {}) as Record<string, unknown>,
+        roots: [{ path: SHIPPED_PRESET_ROOT, trust: 'system' }],
+      },
+    })
+  }
+  const telemetryPatch = resolveTelemetryPatch(process.env.DSH_TELEMETRY_DISABLED, rows.has(TELEMETRY_ROW_ID))
+  if (telemetryPatch !== undefined) result.push(telemetryPatch)
+  return result
+}
+
+/** Add launcher-owned rows to a complete fixed composition. */
+function appendLauncherPatches(patches: PatchOptions[]): PatchOptions[] {
+  return [...patches, ...launcherPatches(patches)]
 }
 
 /**
@@ -147,27 +190,8 @@ function composeProfile(
   const homePatches = loadOptionalPatches(NAME, homePatchPath()) ?? []
   const overlays = patchFiles.flatMap(file => loadOverlayPatches(NAME, resolve(file)))
   const bundlePatches = profile.layers.flatMap(layer => layer.patches)
-  const rows = new Map<string, EntryOptions>()
-  for (const row of composeEntries([bundlePatches, profile.patches, homePatches, overlays])) {
-    if (typeof row.id === 'string') rows.set(row.id, row)
-  }
-  const composedOverlays = [...overlays]
-  // The SHIPPED root is the part of the roster only this app can resolve: it
-  // sits beside this app's own config, in both the source and built layouts.
-  // The writable root the roster appends is `dsh-agent-presets`' own, so a
-  // launcher that never reaches this patch still finds a person's presets.
-  if (rows.has('agent-presets')) {
-    composedOverlays.push({
-      id: 'agent-presets',
-      config: {
-        ...(rows.get('agent-presets')?.config ?? {}) as Record<string, unknown>,
-        roots: [{ path: SHIPPED_PRESET_ROOT, trust: 'system' }],
-      },
-    })
-  }
-  const telemetryPatch = resolveTelemetryPatch(process.env.DSH_TELEMETRY_DISABLED, rows.has(TELEMETRY_ROW_ID))
-  if (telemetryPatch !== undefined) composedOverlays.push(telemetryPatch)
-  return { profile, bundlePatches, homePatches, overlays: composedOverlays, rows }
+  const launcher = launcherPatches([...bundlePatches, ...profile.patches, ...homePatches, ...overlays])
+  return { profile, bundlePatches, homePatches, overlays: [...overlays, ...launcher] }
 }
 
 /** Options for {@link runProfile}. */
@@ -198,14 +222,36 @@ function suppressShutdownError(ctx: Context, signal: AbortSignal, error: unknown
   throw error
 }
 
+/** A patch watcher that belongs to a mutable profile surface. */
+interface LivePatchLayer {
+  /** Absolute patch file watched by Cordis HMR. */
+  filename: string
+  /** Compose the complete patch list after this file changes. */
+  compose: (patches: PatchOptions[]) => PatchOptions[]
+}
+
+/** Input shared by the dynamic profile and fixed Web boot paths. */
+interface BootPlan {
+  /** This run's immutable launch environment snapshot. */
+  environment: LaunchEnvironmentSnapshot
+  /** Absolute empty Include root. */
+  rootConfig: string
+  /** Complete initial patch list, already ordered by the caller. */
+  patches: readonly PatchOptions[]
+  /** Arguments owned by the mounted app plugins. */
+  args: readonly string[]
+  /** Optional installation anchor for bare plugin imports in a closed runtime. */
+  bareModuleBaseUrl?: string
+  /** Mutable patch layers to watch after the initial tree settles. */
+  livePatchLayers?: readonly LivePatchLayer[]
+}
+
 /**
- * Boot one profile invocation end to end and leave process lifetime to the
- * mounted plugins (or to a one-shot runner the composition mounts).
- * @param options - environment snapshot, profile name, overlays, and the booted app's own arguments.
- * @returns the settled root context and the shutdown controller.
+ * Boot one ordered patch composition and own its process lifetime.
+ * @param plan - root, patches, launch facts, and optional mutable layers.
+ * @returns the settled root context and its shutdown controller.
  */
-export async function runProfile(options: RunProfileOptions): Promise<{ ctx: Context; shutdown: ProcessShutdown }> {
-  const composed = composeProfile(options.profile, options.patchFiles)
+async function runBootPlan(plan: BootPlan): Promise<{ ctx: Context; shutdown: ProcessShutdown }> {
   const app: { current?: Context } = {}
   const shutdown = createProcessShutdown(async () => { await app.current?.fiber.dispose() })
   const signalShutdown = new AbortController()
@@ -224,39 +270,34 @@ export async function runProfile(options: RunProfileOptions): Promise<{ ctx: Con
     await app.current?.fiber.dispose()
   })
 
-  const rootConfig = join(composed.profile.dir, PROFILE_ROOT_FILENAME)
-  // Recomposition for the live user layers: bundle layers below, overlays
-  // above, so a user edit can never displace them. Parsed app arguments are
-  // not in here at all — they live in app-provided services that survive a
-  // recomposition. BOTH
-  // user files are re-read per generation (the HMR watcher hands us only the
-  // changed file's patches, which one of the reads duplicates — fresh reads
-  // keep the two watchers from stitching in each other's stale copy).
-  // Fresh clones per generation: the include pushes `insert` rows into the
-  // mounted tree BY REFERENCE and later id-targeted patches mutate those
-  // objects in place. Reusing one parsed patch object across applications
-  // would bake a user override into the bundle's in-memory insert row, so
-  // removing the override could never revert the row to the bundle default.
-  const composeLive = (): PatchOptions[] => structuredClone([
-    ...composed.bundlePatches,
-    ...loadOptionalPatches(NAME, composed.profile.patchPath) ?? [],
-    ...loadOptionalPatches(NAME, homePatchPath()) ?? [],
-    ...composed.overlays,
-  ])
-  // Cloned for the same insert-aliasing reason as composeLive: the boot
-  // application must not mutate the objects later reloads recompose from.
-  const ctx = await boot(NAME, rootConfig, structuredClone(allPatches(composed)), (hostCtx) => {
+  const livePatchLayers = plan.livePatchLayers ?? []
+  // The dynamic profile path recomposes mutable patch files. The fixed Web
+  // path has no layers here, so it cannot reload a new plugin after packaging.
+  if (livePatchLayers.length === 0) {
+    const ctx = await boot(NAME, plan.rootConfig, structuredClone([...plan.patches]), (hostCtx) => {
+      app.current = hostCtx
+      hostCtx.provide(DSH_LAUNCH_ENVIRONMENT_KEY, plan.environment)
+      provideCmdline(hostCtx, {
+        args: plan.args,
+        exit: code => void shutdown.shutdown(code),
+      })
+    }, plan.bareModuleBaseUrl)
+    app.current = ctx
+    return { ctx, shutdown }
+  }
+
+  const ctx = await boot(NAME, plan.rootConfig, structuredClone([...plan.patches]), (hostCtx) => {
     app.current = hostCtx
     // Before any config-tree entry mounts, so plugins resolve all launch-time
     // environment values from the same immutable provenance snapshot.
-    hostCtx.provide(DSH_LAUNCH_ENVIRONMENT_KEY, options.environment)
+    hostCtx.provide(DSH_LAUNCH_ENVIRONMENT_KEY, plan.environment)
     // The command line and bounded exit request are launcher facts available
     // to every app plugin that injects the argument snapshot.
     provideCmdline(hostCtx, {
-      args: options.args,
+      args: plan.args,
       exit: code => void shutdown.shutdown(code),
     })
-  })
+  }, plan.bareModuleBaseUrl)
   app.current = ctx
   // A surface can dispose the whole tree while boot or this post-boot watcher
   // setup is still in flight — a signal, or a fast one-shot's appExit. Loader
@@ -282,19 +323,79 @@ export async function runProfile(options: RunProfileOptions): Promise<{ ctx: Con
         }
         await ctx.loader.create({ name: '@deepseek-ai/cordis-plugin-hmr', config: { root: [] } })
       }
-      await watchUserPatches(ctx, {
-        binName: NAME,
-        filename: composed.profile.patchPath,
-        compose: composeLive,
-      })
-      await watchUserPatches(ctx, {
-        binName: NAME,
-        filename: homePatchPath(),
-        compose: composeLive,
-      })
+      for (const layer of livePatchLayers) {
+        await watchUserPatches(ctx, {
+          binName: NAME,
+          filename: layer.filename,
+          compose: layer.compose,
+        })
+      }
     } catch (error) {
       suppressShutdownError(ctx, signalShutdown.signal, error)
     }
   }
   return { ctx, shutdown }
+}
+
+/**
+ * Boot one profile invocation end to end and leave process lifetime to the
+ * mounted plugins (or to a one-shot runner the composition mounts).
+ * @param options - environment snapshot, profile name, overlays, and the booted app's own arguments.
+ * @returns the settled root context and the shutdown controller.
+ */
+export async function runProfile(options: RunProfileOptions): Promise<{ ctx: Context; shutdown: ProcessShutdown }> {
+  const composed = composeProfile(options.profile, options.patchFiles)
+  const rootConfig = join(composed.profile.dir, PROFILE_ROOT_FILENAME)
+  // Recomposition for the live user layers: bundle layers below, overlays
+  // above, so a user edit can never displace them. Parsed app arguments are
+  // not in here at all — they live in app-provided services that survive a
+  // recomposition. BOTH user files are re-read per generation. Fresh clones
+  // prevent Include's in-place patch updates from mutating the bundle defaults.
+  const composeLive = (): PatchOptions[] => structuredClone([
+    ...composed.bundlePatches,
+    ...loadOptionalPatches(NAME, composed.profile.patchPath) ?? [],
+    ...loadOptionalPatches(NAME, homePatchPath()) ?? [],
+    ...composed.overlays,
+  ])
+  return runBootPlan({
+    environment: options.environment,
+    rootConfig,
+    patches: allPatches(composed),
+    args: options.args,
+    livePatchLayers: [
+      { filename: composed.profile.patchPath, compose: composeLive },
+      { filename: homePatchPath(), compose: composeLive },
+    ],
+  })
+}
+
+/** Options for the fixed Web executable entry. */
+export interface FixedWebProfileOptions {
+  /** This run's frozen environment snapshot. */
+  environment: LaunchEnvironmentSnapshot
+  /** Arguments for the Web startup service, such as `--port 0`. */
+  args: readonly string[]
+}
+
+/**
+ * Boot the packaged Web composition without any user-owned plugin layer.
+ * Sessions, settings, credentials, and other durable data still use
+ * `$DSH_HOME`; only the Cordis patch roster and plugin code are fixed in the
+ * installed runtime and change when the executable is rebuilt.
+ * @param options - launch environment and Web application arguments.
+ * @returns the settled root context and its shutdown controller.
+ */
+export async function runFixedWebProfile(
+  options: FixedWebProfileOptions,
+): Promise<{ ctx: Context; shutdown: ProcessShutdown }> {
+  const patches = appendLauncherPatches(fixedWebPatchPaths().flatMap(path => loadOverlayPatches(NAME, path)))
+  return runBootPlan({
+    environment: options.environment,
+    rootConfig: FIXED_WEB_ROOT_CONFIG,
+    patches,
+    args: options.args,
+    // The fixed runtime owns all bare plugin resolution. No profile directory
+    // is consulted, and no package manager state is needed at runtime.
+    bareModuleBaseUrl: import.meta.url,
+  })
 }

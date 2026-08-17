@@ -144,15 +144,17 @@ describe('jsonrpc-agent keyless smoke', () => {
         },
       })
       const tools = modelRequests[0]?.tools as { function?: { name?: string } }[]
+      const shellToolName = process.platform === 'win32' ? 'pwsh' : 'bash'
       expect(modelRequests[0]?.max_tokens).toBe(1234)
       expect(tools.map(tool => tool.function?.name).sort()).toEqual([
-        'bash',
+        'ask_user_question',
         'edit',
         'read',
         'subagent',
         'todo_write',
         'write',
-      ])
+        shellToolName,
+      ].sort())
 
       child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'shutdown' })}\n`)
       const shutdown = await waitForLine(lines, value => value.id === 3, () => stderr)
@@ -168,6 +170,111 @@ describe('jsonrpc-agent keyless smoke', () => {
       expect(JSON.parse((await decompress(compressed)).toString())).toMatchObject({ type: 'session', id: 'main' })
     } finally {
       // No-op after exit; reject: false settles on every outcome, so cleanup never races teardown.
+      child.kill('SIGKILL')
+      await child
+      await new Promise<void>(resolve => modelServer.close(() => { resolve() }))
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 40_000)
+
+  it('executes the platform-native shell tool inside the child sandbox', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-jsonrpc-shell-smoke-'))
+    const modelRequests: Record<string, unknown>[] = []
+    const shellToolName = process.platform === 'win32' ? 'pwsh' : 'bash'
+    const shellCommand = process.platform === 'win32' ? 'Write-Output dsh-platform-shell-ok' : 'printf dsh-platform-shell-ok'
+    const modelServer = createServer((request, response) => {
+      let body = ''
+      request.setEncoding('utf8')
+      request.on('data', (chunk: string) => { body += chunk })
+      request.on('end', () => {
+        const modelRequest = JSON.parse(body) as Record<string, unknown>
+        modelRequests.push(modelRequest)
+        const turn = modelRequests.length === 1
+        const payload = turn
+          ? {
+            choices: [{
+              delta: {
+                role: 'assistant',
+                content: null,
+                tool_calls: [{
+                  index: 0,
+                  id: 'shell-smoke-call',
+                  type: 'function',
+                  function: {
+                    name: shellToolName,
+                    arguments: JSON.stringify({ command: shellCommand, description: 'Run platform shell smoke' }),
+                  },
+                }],
+              },
+            }],
+          }
+          : { choices: [{ delta: { content: 'shell smoke complete' } }] }
+        const finish = turn ? 'tool_calls' : 'stop'
+        response.writeHead(200, { 'content-type': 'text/event-stream' })
+        response.write(`data: ${JSON.stringify(payload)}\n\n`)
+        response.end(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: finish }] })}\n\ndata: [DONE]\n\n`)
+      })
+    })
+    await new Promise<void>(resolve => modelServer.listen(0, '127.0.0.1', resolve))
+    const address = modelServer.address()
+    if (address === null || typeof address === 'string') throw new Error('model server did not bind a TCP port')
+    const child = execa(process.execPath, ['--import', 'tsx', binScript, configPath], {
+      cwd: repoRoot,
+      env: {
+        DEEPSEEK_API_KEY: 'keyless-shell-smoke-no-call',
+        DEEPSEEK_BASE_URL: `http://127.0.0.1:${address.port}`,
+        DSH_CWD: root,
+        DSH_SESSION_ROOT: join(root, '.sessions'),
+      },
+      timeout: 35_000,
+      killSignal: 'SIGKILL',
+      reject: false,
+    })
+    const lines: string[] = []
+    let stdoutBuffer = ''
+    let stderr = ''
+    child.stdout.on('data', (chunk: Buffer) => {
+      stdoutBuffer += chunk.toString('utf8')
+      const parts = stdoutBuffer.split('\n')
+      stdoutBuffer = parts.pop() ?? ''
+      lines.push(...parts)
+    })
+    child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8') })
+
+    try {
+      child.stdin.write(`${JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: { cwd: root, provider: 'deepseek-official', model: 'deepseek-v4-pro', maxTokens: 1234 },
+      })}\n`)
+      await waitForLine(lines, value => value.id === 1, () => stderr)
+      child.stdin.write(`${JSON.stringify({
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'session/prompt',
+        params: { sessionId: 'main', contentBlocks: [{ type: 'text', text: 'run the platform shell smoke' }] },
+      })}\n`)
+      await waitForLine(lines, value => value.id === 2, () => stderr)
+      const toolResult = await waitForLine(lines, (value) => {
+        if (value.method !== 'session.event') return false
+        const event = (value.params as Record<string, unknown> | undefined)?.event as Record<string, unknown> | undefined
+        return event?.type === 'tool/result'
+      }, () => stderr)
+      expect(JSON.stringify(toolResult)).toContain('dsh-platform-shell-ok')
+      await waitForLine(lines, (value) => {
+        if (value.method !== 'session.event') return false
+        const event = (value.params as Record<string, unknown> | undefined)?.event as Record<string, unknown> | undefined
+        return event?.type === 'turn/end'
+      }, () => stderr)
+      expect(modelRequests).toHaveLength(2)
+      const firstTools = modelRequests[0]?.tools as { function?: { name?: string } }[]
+      expect(firstTools.map(tool => tool.function?.name)).toContain(shellToolName)
+      child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'shutdown' })}\n`)
+      await waitForLine(lines, value => value.id === 3, () => stderr)
+      const exit = await child
+      expect(exit.exitCode, `signal=${String(exit.signal)}; stderr=${stderr}`).toBe(0)
+    } finally {
       child.kill('SIGKILL')
       await child
       await new Promise<void>(resolve => modelServer.close(() => { resolve() }))

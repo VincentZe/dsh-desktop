@@ -1,0 +1,22 @@
+{
+  "backend": {
+    "node": "dsh\\dsh-web.exe",
+    "cli": "",
+    "args": ["--port", "0"],
+    "workingDirectory": "dsh"
+  },
+  "window": {
+    "title": "DeepSeek Harness",
+    "width": 1280,
+    "height": 860,
+    "minWidth": 800,
+    "minHeight": 600,
+    "alwaysOnTop": false,
+    "darkTitleBar": true
+  },
+  "webview": {
+    "userDataFolder": "DshDesktop\\WebView2",
+    "enableDevtools": false
+  },
+  "startTimeoutSeconds": 120
+}

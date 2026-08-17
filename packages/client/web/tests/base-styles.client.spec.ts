@@ -63,4 +63,9 @@ describe('web shell base.css', () => {
     expect(platform).toBeGreaterThanOrEqual(0)
     expect(scrollbar).toBeGreaterThan(platform)
   })
+
+  it('keeps the native glass visible around the desktop shell', () => {
+    expect(baseCss).toContain('body:has([data-dsh-window-shell])')
+    expect(baseCss).toMatch(/body:has\(\[data-dsh-window-shell\]\)[\s\S]*background:\s*transparent/)
+  })
 })

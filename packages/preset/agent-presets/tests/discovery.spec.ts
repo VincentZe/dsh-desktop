@@ -7,12 +7,21 @@ import { COMPOSITION_FILE, discoverPresets, scanRoot } from '@deepseek-ai/dsh-ag
 
 const fsHarness = vi.hoisted(() => ({
   nextReadError: undefined as NodeJS.ErrnoException | undefined,
+  nextDirectoryEntries: undefined as string[] | undefined,
 }))
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
   return {
     ...actual,
+    readdir: (async (...args: never[]) => {
+      const entries = fsHarness.nextDirectoryEntries
+      if (entries !== undefined) {
+        fsHarness.nextDirectoryEntries = undefined
+        return entries
+      }
+      return (actual.readdir as (...args: never[]) => Promise<unknown>)(...args)
+    }) as typeof actual.readdir,
     readFile: (async (path: unknown, ...rest: never[]) => {
       const error = fsHarness.nextReadError
       if (error !== undefined) {
@@ -30,6 +39,7 @@ const USER = { path: join(FIXTURES, 'user'), trust: 'user' as const }
 
 beforeEach(() => {
   fsHarness.nextReadError = undefined
+  fsHarness.nextDirectoryEntries = undefined
 })
 
 describe('display order', () => {
@@ -133,6 +143,17 @@ describe('preset discovery', () => {
     const found = await scanRoot({ path: root, trust: 'user' })
 
     expect(found.map(preset => preset.id)).toEqual(['real'])
+  })
+
+  it('accepts directory names from runtimes that do not preserve Dirent methods', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-presets-names-'))
+    await mkdir(join(root, 'usable'))
+    await writeFile(join(root, 'usable', COMPOSITION_FILE), '[]\n')
+    fsHarness.nextDirectoryEntries = ['usable']
+
+    const found = await scanRoot({ path: root, trust: 'user' })
+
+    expect(found.map(preset => preset.id)).toEqual(['usable'])
   })
 
   it('reports a root it cannot read rather than treating it as empty', async () => {

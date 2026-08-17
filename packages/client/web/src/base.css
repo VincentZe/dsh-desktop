@@ -25,6 +25,12 @@ body {
   background: var(--dsw-alias-bg-base);
 }
 
+/* The native shell supplies the glass pixels around the inset WebView. Keep
+   the document corners transparent so the rounded Win32 frame remains visible. */
+body:has([data-dsh-window-shell]) {
+  background: transparent;
+}
+
 /* Form controls don't inherit the body font (UA sheets pin their families —
    Chrome buttons fall back to Arial, textareas to monospace), so the app
    stack is re-applied to them explicitly, as upstream's global reset does. */

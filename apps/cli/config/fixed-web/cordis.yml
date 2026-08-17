@@ -1,0 +1,4 @@
+# Fixed Web runtime root. The Web bundle patch layers are applied by
+# apps/cli/src/profile-boot.ts; this file only anchors module resolution beside
+# the packaged node_modules directory.
+[]

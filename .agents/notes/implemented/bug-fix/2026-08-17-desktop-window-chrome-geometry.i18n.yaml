@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-08-17-desktop-window-chrome-geometry.md
+2026-08-17-desktop-window-chrome-geometry.md: ec828b6194c0f7450338bd10d4c29b9b44ccd1dc
+2026-08-17-desktop-window-chrome-geometry.zh.md: 4c4f353d4ebb66daa8ceab5ee4b320ad0fcbfcee

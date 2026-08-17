@@ -33,26 +33,69 @@
     thinking: enabled
     reasoningEffort: max
 
-# Managed child-process groups for the bash executor (spawn/kill/output plumbing).
+# The runner supplies DSH_PERMISSION_MODE and DSH_APPROVAL_POLICY for each
+# child. The defaults match the runner: writes stay inside the session cwd and
+# a wider sandbox retry requires an approval answerer. This JSON-RPC runtime
+# has no human approval UI, so an unanswered escalation fails closed.
+- id: sandbox
+  name: '@deepseek-ai/dsh-sandbox-local'
+
+- id: sandbox-policy
+  name: '@deepseek-ai/dsh-sandbox-policy'
+  config:
+    mode: !!js process.env.DSH_PERMISSION_MODE ?? 'workspace-write'
+    workspaceRoot: !!js process.env.DSH_CWD ?? process.cwd()
+
+# Managed child-process groups for the platform-native confined executor
+# (spawn/kill/output plumbing). The Windows ACL runner supports PowerShell's
+# process model; MSYS2 Git Bash creates signal pipes with the user SID, which a
+# write-restricted token cannot authorize without weakening workspace-write.
 - id: subprocess
   name: '@deepseek-ai/dsh-subprocess-local'
 
 - id: bash
-  name: '@deepseek-ai/dsh-bash-local'
+  name: '@deepseek-ai/dsh-bash-sandbox'
+  disabled: !!js process.platform === 'win32'
   config:
-    cwd: !!js process.env.DSH_CWD ?? process.cwd()
     timeoutMs: 60000
+
+- id: pwsh
+  name: '@deepseek-ai/dsh-pwsh-sandbox'
+  disabled: !!js process.platform !== 'win32'
+  config:
+    timeoutMs: 60000
+
+- id: approval
+  name: '@deepseek-ai/dsh-user-approval'
+  config:
+    policy: !!js process.env.DSH_APPROVAL_POLICY ?? 'ask'
+
+- id: shell-env
+  name: '@deepseek-ai/dsh-shell-env'
 
 - id: agent-spine
   name: '@deepseek-ai/dsh-agent-spine-demo'
   config:
-    persona: !!js process.env.DSH_SYSTEM_PROMPT ?? 'You are a coding agent.'
+    persona: !!js process.env.DSH_SYSTEM_PROMPT ?? 'You are a coding agent. Your working directory is {{cwd}}.'
     workspaceContext: false
     skills:
       enabled: false
-    toolBash:
-      enableRunInBackground: false
+    # The platform-gated shell tool rows below own the model-facing shell
+    # name; mounting the agent-spine bash consumer here would duplicate it.
+    toolBash: false
     toolJobs: false
+
+- id: tool-bash
+  name: '@deepseek-ai/dsh-tool-bash'
+  disabled: !!js process.platform === 'win32'
+  config:
+    enableRunInBackground: false
+
+- id: tool-pwsh
+  name: '@deepseek-ai/dsh-tool-pwsh'
+  disabled: !!js process.platform !== 'win32'
+  config:
+    enableRunInBackground: false
 
 - id: sessions
   name: '@deepseek-ai/dsh-session-persistence-jsonl'
@@ -85,7 +128,7 @@
     allowParallelInProgress: true
 
 - id: fs-local
-  name: '@deepseek-ai/dsh-fs-local'
+  name: '@deepseek-ai/dsh-fs-sandbox'
   config:
     cwd: !!js process.env.DSH_CWD ?? process.cwd()
 
