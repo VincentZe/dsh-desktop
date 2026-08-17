@@ -177,7 +177,7 @@ Conversion preserves logical request order without adding text, while the select
 
 #### What the model sees
 
-pi-ai events become harness reasoning, text, tool-call, usage, and finish chunks. The adapter passes parsed tool arguments to the harness as raw JSON strings.
+pi-ai events become harness reasoning, text, tool-call, usage, and finish chunks. The adapter passes parsed tool arguments to the harness as raw JSON strings. When an OpenAI-compatible gateway echoes the exact DeepSeek closing tool-call sentinel `</｜DSML｜tool_calls>` inside text output, the stream converter removes that sentinel and its trailing whitespace, including when the sentinel is split across deltas; other text remains unchanged.
 
 #### Token effect
 

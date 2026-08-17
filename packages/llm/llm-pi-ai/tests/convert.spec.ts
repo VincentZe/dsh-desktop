@@ -577,6 +577,51 @@ describe('toStreamChunks', () => {
     ])
   })
 
+  it('does not expose a split DSML tool-call sentinel as assistant text', async () => {
+    const dsmlClose = '</\uFF5CDSML\uFF5Ctool_calls>'
+    const text = `before\n\n${dsmlClose}\n\n`
+    const done = assistant({
+      content: [
+        { type: 'text', text },
+        { type: 'toolCall', id: 'call-1', name: 'f', arguments: {} },
+      ],
+      stopReason: 'toolUse',
+    })
+    const chunks = await collect(toStreamChunks(feed(
+      { type: 'start', partial: assistant() },
+      { type: 'text_start', contentIndex: 0, partial: assistant() },
+      { type: 'text_delta', contentIndex: 0, delta: 'before\n\n</', partial: assistant() },
+      { type: 'text_delta', contentIndex: 0, delta: '\uFF5CDSML\uFF5Ctool', partial: assistant() },
+      { type: 'text_delta', contentIndex: 0, delta: '_calls>\n\n', partial: assistant() },
+      { type: 'text_end', contentIndex: 0, content: text, partial: assistant() },
+      { type: 'toolcall_start', contentIndex: 1, partial: done },
+      {
+        type: 'toolcall_end',
+        contentIndex: 1,
+        toolCall: { type: 'toolCall', id: 'call-1', name: 'f', arguments: {} },
+        partial: done,
+      },
+      { type: 'done', reason: 'toolUse', message: done },
+    )))
+
+    expect(chunks).toContainEqual({ type: 'text-delta', index: 0, text: 'before\n\n' })
+    expect(chunks).toContainEqual({ type: 'block-end', index: 0, block: { type: 'text', text: 'before\n\n' } })
+    expect(chunks.some(chunk => JSON.stringify(chunk).includes(dsmlClose))).toBe(false)
+    expect(chunks.at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'tool-calls' } })
+  })
+
+  it('preserves text when a DSML sentinel is incomplete', async () => {
+    const text = 'literal </\uFF5CDSML\uFF5Ctool_call'
+    const chunks = await collect(toStreamChunks(feed(
+      { type: 'text_start', contentIndex: 0, partial: assistant() },
+      { type: 'text_delta', contentIndex: 0, delta: text, partial: assistant() },
+      { type: 'text_end', contentIndex: 0, content: text, partial: assistant() },
+      { type: 'done', reason: 'stop', message: assistant({ content: [{ type: 'text', text }] }) },
+    )))
+
+    expect(chunks).toContainEqual({ type: 'block-end', index: 0, block: { type: 'text', text } })
+  })
+
   it('maps thinking events to reasoning blocks', async () => {
     const chunks = await collect(toStreamChunks(feed(
       { type: 'thinking_start', contentIndex: 0, partial: assistant() },

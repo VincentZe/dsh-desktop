@@ -112,6 +112,71 @@ export function mapStopReason(message: AssistantMessage, contextWindow?: number)
   }
 }
 
+const DSML_TOOL_CALL_CLOSE = '</\uFF5CDSML\uFF5Ctool_calls>'
+
+interface TextDeltaState {
+  pending: string
+  suppressWhitespaceAfterSentinel: boolean
+}
+
+/** Remove the exact DeepSeek tool-call sentinel echoed by some gateways. */
+function stripDsmlToolCallClose(text: string): string {
+  let result = ''
+  let cursor = 0
+  while (true) {
+    const start = text.indexOf(DSML_TOOL_CALL_CLOSE, cursor)
+    if (start < 0) return result + text.slice(cursor)
+    result += text.slice(cursor, start)
+    cursor = start + DSML_TOOL_CALL_CLOSE.length
+    while (cursor < text.length && /\s/u.test(text[cursor]!)) cursor += 1
+  }
+}
+
+/** Keep only a possible sentinel prefix at the end of a text delta. */
+function sentinelPrefixLength(text: string): number {
+  const max = Math.min(text.length, DSML_TOOL_CALL_CLOSE.length - 1)
+  for (let length = max; length > 0; length -= 1) {
+    if (DSML_TOOL_CALL_CLOSE.startsWith(text.slice(text.length - length))) return length
+  }
+  return 0
+}
+
+/** Filter a split sentinel without delaying ordinary text deltas. */
+function filterTextDelta(state: TextDeltaState, delta: string): string {
+  let pending = state.pending + delta
+  state.pending = ''
+  let result = ''
+
+  while (pending.length > 0) {
+    const start = pending.indexOf(DSML_TOOL_CALL_CLOSE)
+    if (start >= 0) {
+      result += pending.slice(0, start)
+      pending = pending.slice(start + DSML_TOOL_CALL_CLOSE.length)
+      state.suppressWhitespaceAfterSentinel = true
+      continue
+    }
+
+    if (state.suppressWhitespaceAfterSentinel) {
+      let firstContent = 0
+      while (firstContent < pending.length && /\s/u.test(pending[firstContent]!)) firstContent += 1
+      if (firstContent === pending.length) {
+        state.pending = pending
+        return result
+      }
+      result += pending.slice(firstContent)
+      state.suppressWhitespaceAfterSentinel = false
+      return result
+    }
+
+    const held = sentinelPrefixLength(pending)
+    result += pending.slice(0, pending.length - held)
+    state.pending = pending.slice(pending.length - held)
+    return result
+  }
+
+  return result
+}
+
 /**
  * Translate the pi-ai event stream into StreamChunks. pi-ai never throws
  * mid-stream — failures arrive as `error` events, which become error/aborted
@@ -128,20 +193,32 @@ export async function* toStreamChunks(
   // pi-ai contentIndex ↔ our block index map 1:1 (both count blocks from 0
   // in stream order), but we track ids per index for tool calls.
   const toolIds = new Map<number, { id: string; name: string }>()
+  const textStates = new Map<number, TextDeltaState>()
 
   for await (const event of events) {
     switch (event.type) {
       case 'start':
         break
       case 'text_start':
+        textStates.set(event.contentIndex, { pending: '', suppressWhitespaceAfterSentinel: false })
         yield { type: 'block-start', index: event.contentIndex, blockType: 'text' }
         break
-      case 'text_delta':
-        yield { type: 'text-delta', index: event.contentIndex, text: event.delta }
+      case 'text_delta': {
+        const state = textStates.get(event.contentIndex) ?? { pending: '', suppressWhitespaceAfterSentinel: false }
+        textStates.set(event.contentIndex, state)
+        const text = filterTextDelta(state, event.delta)
+        if (text.length > 0) yield { type: 'text-delta', index: event.contentIndex, text }
         break
-      case 'text_end':
-        yield { type: 'block-end', index: event.contentIndex, block: { type: 'text', text: event.content } }
+      }
+      case 'text_end': {
+        textStates.delete(event.contentIndex)
+        yield {
+          type: 'block-end',
+          index: event.contentIndex,
+          block: { type: 'text', text: stripDsmlToolCallClose(event.content) },
+        }
         break
+      }
       case 'thinking_start':
         yield { type: 'block-start', index: event.contentIndex, blockType: 'reasoning' }
         break
