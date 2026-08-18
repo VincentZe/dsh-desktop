@@ -10,7 +10,7 @@ The borderless desktop window renders the React document inside a WebView inset 
 
 ## Decision
 
-`DesktopChrome` marks the native shell so `base.css` makes the document background transparent only for the desktop host. Its wrapper is a flex column with explicit width constraints, keeps the rounded clip in restored state, and removes that clip when the native state reports maximized. A primary-button pointer down on a non-interactive page target posts LunaUI's `{ type: "window", action: "drag" }`; buttons, form controls, links, labels, summaries, role buttons, tree items, and explicitly ignored host controls remain interactive. Native resize margins and hit testing stay owned by LunaUI.
+`DesktopChrome` marks the native shell so `base.css` makes the document background transparent only for the desktop host. Its wrapper is an absolutely positioned flex column with an eight-pixel restored-state inset, keeping the rounded clip and a small shadow inside the WebView viewport; maximized state resets the inset and removes both. The shell exposes `--dsh-window-utility-clearance` for right-aligned Session Header utilities so they remain clear of the floating native controls. A primary-button pointer down on a non-interactive page target posts LunaUI's `{ type: "window", action: "drag" }`; buttons, form controls, links, labels, summaries, role buttons, tree items, and explicitly ignored host controls remain interactive. Native resize margins and hit testing stay owned by LunaUI.
 
 ## Alternatives considered
 
@@ -23,6 +23,9 @@ The borderless desktop window renders the React document inside a WebView inset 
 ## Consequences
 
 - Restored windows expose the native rounded frame and resize margin; maximized windows fill their rectangular client area without page-corner gaps.
+- Restored windows use a compact shadow, and maximized windows remove it with the rounded clip.
+- The restored page keeps an eight-pixel transparent ring around the shadow; maximized state removes that ring with the inset.
+- The Session log utility keeps an eight-pixel gap from the native control group through the shell-provided clearance variable.
 - Background dragging is available through the existing LunaUI window protocol while common interactive elements do not start a move.
 - Browser previews keep their existing document background and do not render native controls because the WebView bridge is absent.
 

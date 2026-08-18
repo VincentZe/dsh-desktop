@@ -518,6 +518,10 @@
   line-height: 18px;
 }
 
+.modelField select.input {
+  max-width: none;
+}
+
 .modelEmpty {
   padding: 12px;
   border: 1px dashed var(--dsw-alias-border-l3);

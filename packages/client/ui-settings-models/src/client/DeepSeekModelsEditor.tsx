@@ -17,7 +17,7 @@ import styles from './ModelsSection.module.css'
 export type DeepSeekModelDraft = Record<string, unknown>
 
 /** The catalog fields this editor writes. */
-type CatalogField = 'id' | 'name' | 'contextWindow' | 'maxTokens'
+type CatalogField = 'id' | 'name' | 'supportsReasoningEffort' | 'contextWindow' | 'maxTokens'
 
 /** The two token counts edited as K/M-suffixed text behind a row's disclosure. */
 type CapacityField = 'contextWindow' | 'maxTokens'
@@ -74,7 +74,7 @@ export interface DeepSeekModelsValidationFailure {
   index: number
   /** Message key owned by the Models settings section. */
   key: 'modelIdRequired' | 'modelIdDuplicate' | 'modelNameInvalid' | 'modelContextInvalid'
-  | 'modelMaxTokensInvalid'
+  | 'modelMaxTokensInvalid' | 'modelReasoningInvalid'
 }
 
 /** Convert a schema-validated catalog value into records without dropping hidden fields. */
@@ -117,6 +117,10 @@ export function validateDeepSeekModels(value: unknown): DeepSeekModelsValidation
     if (maxTokens !== undefined
       && (typeof maxTokens !== 'number' || !Number.isInteger(maxTokens) || maxTokens <= 0)) {
       return { index, key: 'modelMaxTokensInvalid' }
+    }
+    const supportsReasoningEffort = model['supportsReasoningEffort']
+    if (supportsReasoningEffort !== undefined && typeof supportsReasoningEffort !== 'boolean') {
+      return { index, key: 'modelReasoningInvalid' }
     }
   }
   return undefined
@@ -262,6 +266,25 @@ export function DeepSeekModelsEditor(props: DeepSeekModelsEditorProps): ReactNod
     </label>
   )
 
+  /** Render the adapter strategy for this model's reasoning controls. */
+  const reasoningField = (model: DeepSeekModelDraft, index: number): ReactNode => (
+    <label className={styles['modelField']}>
+      <span className={styles['modelFieldLabel']}>{props.t('modelReasoningMode')}</span>
+      <select
+        className={`${styles['input']} ${styles['selectInput']}`}
+        value={model['supportsReasoningEffort'] === false ? 'provider-default' : 'adjustable'}
+        aria-label={`${props.t('modelReasoningMode')} ${String(index + 1)}`}
+        disabled={props.disabled}
+        onChange={(event) => {
+          update(index, 'supportsReasoningEffort', event.target.value === 'provider-default' ? false : undefined)
+        }}
+      >
+        <option value="adjustable">{props.t('modelReasoningAdjustable')}</option>
+        <option value="provider-default">{props.t('modelReasoningProviderDefault')}</option>
+      </select>
+    </label>
+  )
+
   return (
     <section className={styles['modelCatalog']} aria-label={props.t('models')}>
       <div className={styles['modelListHead']}>
@@ -341,6 +364,7 @@ export function DeepSeekModelsEditor(props: DeepSeekModelsEditorProps): ReactNod
                 {expanded.has(index)
                   ? (
                     <div className={styles['modelAdvanced']}>
+                      {reasoningField(model, index)}
                       {capacityField(model, index, 'contextWindow', props.defaultContextWindow)}
                       {capacityField(model, index, 'maxTokens', props.defaultMaxTokens)}
                     </div>

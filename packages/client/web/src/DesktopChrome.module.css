@@ -1,14 +1,17 @@
 .window {
-  position: relative;
+  position: absolute;
+  inset: var(--dsh-window-inset);
   display: flex;
   flex-direction: column;
-  height: 100%;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
   border-radius: 14px;
+  --dsh-window-inset: 8px;
+  --dsh-window-utility-clearance: 104px;
   background: var(--dsw-alias-bg-base, #0e0f13);
   color: var(--dsw-alias-label-primary, #e7eaf0);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 30%);
 }
 
 .dragRegion {
@@ -24,7 +27,9 @@
 }
 
 .window[data-maximized] {
+  inset: 0;
   border-radius: 0;
+  box-shadow: none;
 }
 
 .controls {

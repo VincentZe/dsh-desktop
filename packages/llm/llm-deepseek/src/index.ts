@@ -84,6 +84,7 @@ const catalogModel: z<DeepSeekCatalogModel> = z.object({
   id: z.string().required(),
   name: z.string(),
   description: z.string(),
+  supportsReasoningEffort: z.boolean(),
   contextWindow: z.number().step(1).min(1),
   maxTokens: z.number().step(1).min(1),
 })
@@ -140,6 +141,9 @@ function resolveModels(models: readonly DeepSeekCatalogModel[] | undefined): Dee
       id: model.id,
       ...model.name === undefined ? {} : { name: model.name },
       ...model.description === undefined ? {} : { description: model.description },
+      ...model.supportsReasoningEffort === undefined
+        ? {}
+        : { supportsReasoningEffort: model.supportsReasoningEffort },
       ...model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow },
       ...model.maxTokens === undefined ? {} : { maxTokens: model.maxTokens },
     }

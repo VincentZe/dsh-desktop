@@ -90,6 +90,33 @@ describe('DeepSeekAdapter against a mock server', () => {
     expect(server.headers[0]).not.toHaveProperty('x-deepseek-harness-compact')
   })
 
+  it('leaves provider-default thinking untouched for models without effort controls', async () => {
+    const server = await mockServer([{ kind: 'sse', events: textEvents }])
+    const model = 'deepseek-v4-flash-0731'
+    const ctx = await harness(server.url, {
+      models: [{ id: model, name: 'DeepSeek-V4-Flash-0731', supportsReasoningEffort: false }],
+    })
+
+    const info = await ctx.llm.resolveModelInfo('deepseek-official', model)
+    expect(info.name).toBe('DeepSeek-V4-Flash-0731')
+    expect(info.reasoning).toBeUndefined()
+    await expect(ctx.llm.resolveCallConfig({
+      provider: 'deepseek-official',
+      model,
+      reasoningEffort: ReasoningEffortId('high'),
+    })).rejects.toThrow(/does not support reasoning effort/)
+
+    await assemble(ctx, {
+      model,
+      messages: [createUserMessage({
+        content: [{ type: 'text', text: 'hi' }],
+        source: { kind: 'plugin', plugin: 'test' },
+      })],
+    })
+    expect(server.requests[0]).not.toHaveProperty('thinking')
+    expect(server.requests[0]).not.toHaveProperty('reasoning_effort')
+  })
+
   it('streams raw chunks through ctx.llm.stream', async () => {
     const server = await mockServer([{ kind: 'sse', events: textEvents, delayMs: 2 }])
     const ctx = await harness(server.url)

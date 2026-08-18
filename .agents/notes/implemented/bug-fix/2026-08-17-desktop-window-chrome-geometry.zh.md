@@ -10,7 +10,7 @@ Status: implemented
 
 ## 决策
 
-`DesktopChrome` 标记原生壳，使 `base.css` 仅在桌面宿主中将文档背景设为透明。包装层采用带宽度约束的纵向 flex 布局，在还原状态保留圆角裁剪，并在原生状态报告最大化时移除该裁剪。非交互页面目标收到主按钮 pointer down 时发送 LunaUI 的 `{ type: "window", action: "drag" }`；按钮、表单控件、链接、标签、summary、role button、树节点和显式忽略的宿主控件继续保持交互。原生 resize 内缩和命中测试仍由 LunaUI 负责。
+`DesktopChrome` 标记原生壳，使 `base.css` 仅在桌面宿主中将文档背景设为透明。包装层采用绝对定位的纵向 flex 布局，还原状态保留 8 像素内缩，让圆角裁剪和小范围阴影位于 WebView 视口内；最大化时将内缩恢复为 0，并同时移除圆角和阴影。壳层提供 `--dsh-window-utility-clearance`，让 Session Header 右侧 utility 避开悬浮的原生窗口控件。非交互页面目标收到主按钮 pointer down 时发送 LunaUI 的 `{ type: "window", action: "drag" }`；按钮、表单控件、链接、标签、summary、role button、树节点和显式忽略的宿主控件继续保持交互。原生 resize 内缩和命中测试仍由 LunaUI 负责。
 
 ## 考虑过的替代方案
 
@@ -23,6 +23,9 @@ Status: implemented
 ## 后果
 
 - 还原状态的窗口会显示原生圆角和 resize 区域；最大化窗口会填满矩形客户区，不会留下页面圆角造成的缺口。
+- 还原状态的窗口使用小范围阴影，最大化窗口会和圆角裁剪一起移除阴影。
+- 还原状态页面四周保留 8 像素透明外圈承载阴影；最大化时随内缩一起移除外圈。
+- Session log utility 通过壳层提供的 clearance 变量与原生控件组保持 8 像素间距。
 - 页面背景可以通过现有 LunaUI 窗口协议拖动窗口，同时常见交互元素不会启动移动。
 - 浏览器预览继续使用原有文档背景；由于没有 WebView bridge，也不会显示原生控制按钮。
 

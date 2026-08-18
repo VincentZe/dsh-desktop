@@ -54,6 +54,7 @@ const DeepSeekConfig = Schema.object({
     id: Schema.string().required(),
     name: Schema.string(),
     description: Schema.string(),
+    supportsReasoningEffort: Schema.boolean(),
     contextWindow: Schema.number().step(1).min(1),
   // The adapter declares its catalog as a schema default rather than a
   // composition entry, which is what the restore-defaults path has to read.
@@ -62,12 +63,14 @@ const DeepSeekConfig = Schema.object({
       id: 'deepseek-v4-flash',
       name: 'DeepSeek-V4-Flash',
       description: '',
+      supportsReasoningEffort: true,
       contextWindow: 1_000_000,
     },
     {
       id: 'deepseek-v4-pro',
       name: 'DeepSeek-V4-Pro',
       description: '',
+      supportsReasoningEffort: true,
       contextWindow: 1_000_000,
     },
   ]),
@@ -481,6 +484,30 @@ describe('ModelsSection', () => {
     expect(mutate).not.toHaveBeenCalled()
   })
 
+  it('writes the per-model provider-default reasoning strategy', async () => {
+    const { mutate } = await mountDeepSeekCard()
+    fireEvent.click(screen.getByText(en.customized))
+    expandRow(1)
+
+    const mode = screen.getByLabelText(`${en.modelReasoningMode} 1`) as HTMLSelectElement
+    expect(mode.value).toBe('adjustable')
+    fireEvent.change(mode, { target: { value: 'provider-default' } })
+    fireEvent.click(screen.getByText(en.apply))
+
+    await waitFor(() => { expect(mutate).toHaveBeenCalledTimes(1) })
+    expect(mutate.mock.calls[0]?.[0]).toMatchObject({
+      ns: 'llm-deepseek',
+      ops: [{
+        op: 'set',
+        path: ['models'],
+        value: [
+          { ...DEFAULT_DEEPSEEK_MODELS[0], supportsReasoningEffort: false },
+          DEFAULT_DEEPSEEK_MODELS[1],
+        ],
+      }],
+    })
+  })
+
   it('validates every adapter-owned model catalog invariant', () => {
     expect(modelDrafts(undefined)).toEqual([])
     expect(modelDrafts([null, 'bad', { id: 'ok' }])).toEqual([{}, {}, { id: 'ok' }])
@@ -503,6 +530,9 @@ describe('ModelsSection', () => {
     expect(validateDeepSeekModels([{ id: 'model', maxTokens: 0 }]))
       .toEqual({ index: 0, key: 'modelMaxTokensInvalid' })
     expect(validateDeepSeekModels([{ id: 'model', maxTokens: 8192 }])).toBeUndefined()
+    expect(validateDeepSeekModels([{ id: 'model', supportsReasoningEffort: 'yes' }]))
+      .toEqual({ index: 0, key: 'modelReasoningInvalid' })
+    expect(validateDeepSeekModels([{ id: 'model', supportsReasoningEffort: false }])).toBeUndefined()
   })
 
   it('reads context windows written as counts, thousands, or millions', () => {

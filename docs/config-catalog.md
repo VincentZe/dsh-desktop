@@ -882,6 +882,8 @@ export interface DeepSeekCatalogModel {
   name?: string
   /** Optional selector detail for deployments with similar model variants. */
   description?: string
+  /** Whether this model accepts the adapter's selectable reasoning-effort fields; omitted means supported. */
+  supportsReasoningEffort?: boolean
   /** Known combined request/response context capacity; omitted when deployment metadata is unavailable. */
   contextWindow?: number
   /** Per-request output cap for this model; omission falls back to the profile's {@link DeepSeekConnectionOptions.maxTokens}. */

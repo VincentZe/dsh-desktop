@@ -126,6 +126,7 @@
   align-items: center;
   gap: 8px;
   margin-left: 20px;
+  margin-right: var(--dsh-window-utility-clearance, 0px);
 }
 
 .headerUtilities:empty {

@@ -34,6 +34,8 @@ export interface DeepSeekCatalogModel {
   name?: string
   /** Optional selector detail for deployments with similar model variants. */
   description?: string
+  /** Whether this model accepts the adapter's selectable reasoning-effort fields; omitted means supported. */
+  supportsReasoningEffort?: boolean
   /** Known combined request/response context capacity; omitted when deployment metadata is unavailable. */
   contextWindow?: number
   /** Per-request output cap for this model; omission falls back to the profile's {@link DeepSeekConnectionOptions.maxTokens}. */
@@ -114,6 +116,10 @@ function modelInfo(provider: string, model: DeepSeekCatalogModel): LlmModelInfo 
   }
 }
 
+function supportsReasoningEffort(model: DeepSeekCatalogModel | undefined): boolean {
+  return model?.supportsReasoningEffort !== false
+}
+
 function providerRetryAfterMs(value: string | null): number | undefined {
   if (value === null) return undefined
   if (/^\d+$/.test(value)) {
@@ -179,6 +185,7 @@ export class DeepSeekAdapter extends LlmAdapter {
   ): Promise<LlmResolvedModelInfo> {
     const connection = this.config.options()
     const configured = connection.models.find(entry => entry.id === model)
+    const hasReasoningEffort = supportsReasoningEffort(configured)
     const contextWindow = configured?.contextWindow
       ?? connection.defaultContextWindow
     return Promise.resolve({
@@ -191,23 +198,25 @@ export class DeepSeekAdapter extends LlmAdapter {
         : modelInfo(provider, configured),
       context: { contextWindow },
       defaultMaxTokens: configured?.maxTokens ?? connection.maxTokens,
-      ...connection.defaults.thinking === 'disabled'
-        ? {
-          reasoning: {
-            efforts: OFF_ONLY_REASONING_EFFORTS,
-            defaultEffort: OFF_REASONING_EFFORT,
+      ...!hasReasoningEffort
+        ? {}
+        : connection.defaults.thinking === 'disabled'
+          ? {
+            reasoning: {
+              efforts: OFF_ONLY_REASONING_EFFORTS,
+              defaultEffort: OFF_REASONING_EFFORT,
+            },
+          }
+          : {
+            reasoning: {
+              efforts: REASONING_EFFORTS,
+              defaultEffort: connection.defaults.reasoningEffort === 'off'
+                ? OFF_REASONING_EFFORT
+                : connection.defaults.reasoningEffort === 'max'
+                  ? MAX_REASONING_EFFORT
+                  : HIGH_REASONING_EFFORT,
+            },
           },
-        }
-        : {
-          reasoning: {
-            efforts: REASONING_EFFORTS,
-            defaultEffort: connection.defaults.reasoningEffort === 'off'
-              ? OFF_REASONING_EFFORT
-              : connection.defaults.reasoningEffort === 'max'
-                ? MAX_REASONING_EFFORT
-                : HIGH_REASONING_EFFORT,
-          },
-        },
     })
   }
 
@@ -276,7 +285,17 @@ export class DeepSeekAdapter extends LlmAdapter {
     userId: AnonymousUserId,
     onComment: () => void,
   ): AsyncIterable<StreamChunk> {
-    const body = serializeRequest(options, connection.defaults)
+    const configured = connection.models.find(entry => entry.id === options.model)
+    if (!supportsReasoningEffort(configured) && options.reasoningEffort !== undefined) {
+      throw new LlmError(
+        `DeepSeek model "${options.model}" does not support reasoning effort "${options.reasoningEffort}"`,
+        'UNSUPPORTED_REASONING_EFFORT',
+      )
+    }
+    const body = serializeRequest(
+      options,
+      supportsReasoningEffort(configured) ? connection.defaults : {},
+    )
     // Prepared outside the try so the TRANSPORT label below covers exactly the
     // transport boundary, never a serialization failure.
     const payload = JSON.stringify(body)
