@@ -5,7 +5,7 @@
  * except workspace Rename/Delete and session Rename/Fork/Archive; the session
  * and workspace hover cards are suppressed while a menu is open.
  */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import clsx from 'clsx'
 import {
   HoverCard, IconArchiveOutline20, IconBranchOutline16, IconCheckOutline16,
@@ -386,8 +386,8 @@ export function SessionNodeItem({
   onStartSelection?: ((id: SessionNode['id']) => void) | undefined
   onToggleSelection?: ((id: SessionNode['id']) => void) | undefined
   onTrashSelected?: (() => void) | undefined
-  /** Start selecting rows while the primary pointer is held. */
-  onSelectionBrushStart?: ((id: SessionNode['id'], pointerId: number, operation: 'replace' | 'add' | 'remove') => void) | undefined
+  /** Start selecting rows while the primary pointer is held with Shift or Ctrl. */
+  onSelectionBrushStart?: ((id: SessionNode['id'], pointerId: number, operation: 'add' | 'remove') => void) | undefined
   /** Apply the held pointer's selection operation to an entered row. */
   onSelectionBrushEnter?: ((id: SessionNode['id'], pointerId: number) => void) | undefined
   /** Present only on draggable rows (workspace-group sessions outside search). */
@@ -405,6 +405,17 @@ export function SessionNodeItem({
   const showStatus = primaryStatus.state !== 'done' || row.completed
   const [menuOpen, setMenuOpen] = useState(false)
   const [contextMenuPoint, setContextMenuPoint] = useState<{ x: number; y: number } | null>(null)
+  const [nativeDragBlocked, setNativeDragBlocked] = useState(false)
+  useEffect(() => {
+    if (!nativeDragBlocked) return
+    const clearNativeDragBlock = (): void => { setNativeDragBlocked(false) }
+    window.addEventListener('pointerup', clearNativeDragBlock)
+    window.addEventListener('pointercancel', clearNativeDragBlock)
+    return () => {
+      window.removeEventListener('pointerup', clearNativeDragBlock)
+      window.removeEventListener('pointercancel', clearNativeDragBlock)
+    }
+  }, [nativeDragBlocked])
   // Archive hides the row through the registry-global archive set and never
   // touches the session log, so it is not styled as destructive and needs no
   // confirmation dialog.
@@ -453,14 +464,16 @@ export function SessionNodeItem({
       role="treeitem"
       aria-selected={selected}
       onPointerDown={(event) => {
-        if (event.button !== 0 || selectionMode !== true || trash || row.blank) return
+        if (event.button !== 0 || (!event.shiftKey && !event.ctrlKey) || trash || row.blank || onSelectionBrushStart === undefined) return
         const target = event.target
         if (target instanceof Element && target.closest('button, input, textarea, select, [role="button"], [role="menuitem"]') !== null) return
-        const operation = event.ctrlKey ? 'remove' : event.shiftKey ? 'add' : 'replace'
+        event.preventDefault()
+        setNativeDragBlocked(true)
+        const operation = event.ctrlKey ? 'remove' : 'add'
         onSelectionBrushStart?.(node.id, event.pointerId, operation)
       }}
-      onPointerEnter={(event) => {
-        if (event.buttons !== 0 && (event.buttons & 1) !== 0 && selectionMode === true && !trash && !row.blank) {
+      onPointerMove={(event) => {
+        if (!trash && !row.blank) {
           onSelectionBrushEnter?.(node.id, event.pointerId)
         }
       }}
@@ -474,16 +487,20 @@ export function SessionNodeItem({
         event.stopPropagation()
         setContextMenuPoint({ x: event.clientX, y: event.clientY })
       }}
-      draggable={drag !== undefined && !selectionMode && !trash}
-      onDragStart={drag === undefined || selectionMode || trash
+      draggable={drag !== undefined && !trash && !nativeDragBlocked}
+      onDragStart={drag === undefined || trash
         ? undefined
         : (e) => {
+          if (nativeDragBlocked || e.shiftKey || e.ctrlKey) {
+            e.preventDefault()
+            return
+          }
           e.dataTransfer.effectAllowed = 'move'
           e.dataTransfer.setData('text/plain', node.id)
           drag.start()
         }}
       onDragEnd={drag?.end}
-      onDragOver={drag === undefined || selectionMode || trash
+      onDragOver={drag === undefined || trash || nativeDragBlocked
         ? undefined
         : (e) => {
           if (!drag.active) return
@@ -491,7 +508,7 @@ export function SessionNodeItem({
           e.dataTransfer.dropEffect = 'move'
           drag.hover(rowHalf(e))
         }}
-      onDrop={drag === undefined || selectionMode || trash
+      onDrop={drag === undefined || trash || nativeDragBlocked
         ? undefined
         : (e) => {
           if (!drag.active) return

@@ -207,15 +207,14 @@ interface WorkspaceDragState {
   over: { id: WorkspaceId; half: 'before' | 'after' } | null
 }
 
-/** Selection operation applied by one held primary-pointer gesture. */
-type SelectionBrushOperation = 'replace' | 'add' | 'remove'
+/** Selection operation applied by one modifier-held primary-pointer gesture. */
+type SelectionBrushOperation = 'add' | 'remove'
 
 /** Rows changed by one held primary-pointer gesture. */
 interface SelectionBrushState {
   pointerId: number
   originId: SessionId
   operation: SelectionBrushOperation
-  moved: boolean
 }
 
 /** Resolve an insertion side from the full rendered workspace group. */
@@ -549,7 +548,7 @@ function SessionTree({
                     onRename={onSessionRename}
                     onFork={forkSession}
                     onArchive={onSessionArchive}
-                    drag={selectionMode || group.isTrash ? undefined : dragProps}
+                    drag={group.isTrash ? undefined : dragProps}
                     isTrash={group.isTrash}
                     selectionMode={selectionMode}
                     selectedForBulk={selectedSessionIds.includes(node.id)}
@@ -703,7 +702,7 @@ function FlatList({
               onSelectionBrushStart={onSelectionBrushStart}
               onSelectionBrushEnter={onSelectionBrushEnter}
               flat
-              drag={selectionMode ? undefined : {
+              drag={{
                 start: () => {
                   dropCommitted.current = false
                   setDrag({ accountKey: FLAT_SESSION_ORDER_KEY, sessionId: node.id, over: null })
@@ -889,20 +888,19 @@ export function WorkspaceBrowser({
       : [...current, sessionId])
   }
   const startSelectionBrush = (sessionId: SessionId, pointerId: number, operation: SelectionBrushOperation): void => {
-    if (!selectionMode) return
-    selectionBrush.current = { pointerId, originId: sessionId, operation, moved: false }
+    selectionBrush.current = { pointerId, originId: sessionId, operation }
+    setSelectionMode(true)
+    setSelectedSessionIds((current) => {
+      if (operation === 'remove') return current.filter(id => id !== sessionId)
+      return current.includes(sessionId) ? current : [...current, sessionId]
+    })
   }
   const enterSelectionBrush = (sessionId: SessionId, pointerId: number): void => {
     const brush = selectionBrush.current
-    if (!selectionMode || brush === null || brush.pointerId !== pointerId || brush.originId === sessionId) return
-    const firstMove = !brush.moved
-    brush.moved = true
+    if (brush === null || brush.pointerId !== pointerId || brush.originId === sessionId) return
     setSelectedSessionIds((current) => {
       if (brush.operation === 'remove') {
         return current.filter(id => id !== brush.originId && id !== sessionId)
-      }
-      if (brush.operation === 'replace' && firstMove) {
-        return [brush.originId, sessionId]
       }
       const next = current.includes(brush.originId) ? [...current] : [...current, brush.originId]
       return next.includes(sessionId) ? next : [...next, sessionId]
@@ -918,7 +916,7 @@ export function WorkspaceBrowser({
   useEffect(() => {
     const clearSelectionBrush = (): void => {
       const brush = selectionBrush.current
-      if (brush?.moved === true) suppressSelectionClick.current = true
+      if (brush !== null) suppressSelectionClick.current = true
       selectionBrush.current = null
     }
     const clearSuppressedClick = (): void => {

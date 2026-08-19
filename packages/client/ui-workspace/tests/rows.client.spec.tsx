@@ -512,4 +512,53 @@ describe('workspace browser rows', () => {
     )
     expect(screen.getByRole('treeitem').className).toMatch(/dropAfter/)
   })
+
+  it('does not start row reordering while Shift is held', () => {
+    const node: SessionNode = {
+      id: sid('s1'), title: 'Shift select', blank: false, running: false,
+      runningSubagentCount: 0, completed: false, updatedAt: 0,
+    }
+    const drag = dragProps()
+    render(<SessionNodeItem node={node} currentId={undefined} now={0} onOpen={vi.fn()}
+      onRename={vi.fn()} onFork={vi.fn()} onArchive={vi.fn()} drag={drag} t={t} />)
+    const row = screen.getByRole('treeitem')
+
+    const shiftDrag = createEvent.dragStart(row)
+    Object.defineProperty(shiftDrag, 'shiftKey', { value: true })
+    Object.defineProperty(shiftDrag, 'dataTransfer', { value: dataTransfer })
+    fireEvent(row, shiftDrag)
+    expect(drag.start).not.toHaveBeenCalled()
+
+    const ctrlDrag = createEvent.dragStart(row)
+    Object.defineProperty(ctrlDrag, 'ctrlKey', { value: true })
+    Object.defineProperty(ctrlDrag, 'dataTransfer', { value: dataTransfer })
+    fireEvent(row, ctrlDrag)
+    expect(drag.start).not.toHaveBeenCalled()
+
+    fireEvent.dragStart(row, { dataTransfer })
+    expect(drag.start).toHaveBeenCalledOnce()
+  })
+
+  it('disables native row dragging for a modifier brush before movement', () => {
+    const node: SessionNode = {
+      id: sid('s1'), title: 'Ctrl select', blank: false, running: false,
+      runningSubagentCount: 0, completed: false, updatedAt: 0,
+    }
+    const drag = dragProps()
+    const brushStart = vi.fn()
+    render(<SessionNodeItem node={node} currentId={undefined} now={0} onOpen={vi.fn()}
+      onRename={vi.fn()} onFork={vi.fn()} onArchive={vi.fn()} drag={drag}
+      onSelectionBrushStart={brushStart} t={t} />)
+    const row = screen.getByRole('treeitem')
+
+    fireEvent.pointerDown(row, { button: 0, pointerId: 11, ctrlKey: true })
+    expect(brushStart).toHaveBeenCalledWith(sid('s1'), 11, 'remove')
+    expect(row.getAttribute('draggable')).toBe('false')
+
+    fireEvent.dragStart(row, { dataTransfer })
+    expect(drag.start).not.toHaveBeenCalled()
+
+    fireEvent.pointerUp(window, { pointerId: 11 })
+    expect(row.getAttribute('draggable')).toBe('true')
+  })
 })

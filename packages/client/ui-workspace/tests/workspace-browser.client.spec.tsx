@@ -366,22 +366,21 @@ describe('WorkspaceBrowser', () => {
     expect(b.store.getSnapshot().groupBy).toBe('workspace')
   })
 
-  it('selects every session crossed by a held primary pointer in multi-select mode', () => {
+  it('starts a selection brush directly with Shift', () => {
     const sessions = sessionState([summary('one', 3), summary('two', 2), summary('three', 1)])
     mount({
       useSessions: hook(sessions),
       useWorkspaces: hook(workspaceState([workspace('alpha', ['one', 'two', 'three'])])),
     })
     fireEvent.click(screen.getByText('alpha'))
-    fireEvent.click(screen.getByRole('button', { name: '选择会话' }))
 
     const rows = ['one', 'two', 'three'].map(title => (
       screen.getByText(title).closest('[role="treeitem"]') as HTMLElement
     )) as [HTMLElement, HTMLElement, HTMLElement]
     const [firstRow, secondRow, thirdRow] = rows
-    fireEvent.pointerDown(firstRow, { button: 0, pointerId: 1 })
-    fireEvent.pointerEnter(secondRow, { buttons: 1, pointerId: 1 })
-    fireEvent.pointerEnter(thirdRow, { buttons: 1, pointerId: 1 })
+    fireEvent.pointerDown(firstRow, { button: 0, pointerId: 1, shiftKey: true })
+    fireEvent.pointerMove(secondRow, { buttons: 1, pointerId: 1 })
+    fireEvent.pointerMove(thirdRow, { buttons: 1, pointerId: 1 })
     fireEvent.pointerUp(window, { pointerId: 1 })
 
     expect(screen.getByText('已选择 3 个会话')).toBeTruthy()
@@ -405,12 +404,12 @@ describe('WorkspaceBrowser', () => {
     const secondRow = screen.getByText('two').closest('[role="treeitem"]') as HTMLElement
     const thirdRow = screen.getByText('three').closest('[role="treeitem"]') as HTMLElement
     fireEvent.pointerDown(secondRow, { button: 0, pointerId: 2, shiftKey: true })
-    fireEvent.pointerEnter(thirdRow, { buttons: 1, pointerId: 2 })
+    fireEvent.pointerMove(thirdRow, { buttons: 1, pointerId: 2 })
     fireEvent.pointerUp(window, { pointerId: 2 })
     expect(screen.getByText('已选择 3 个会话')).toBeTruthy()
 
     fireEvent.pointerDown(thirdRow, { button: 0, pointerId: 3, ctrlKey: true })
-    fireEvent.pointerEnter(secondRow, { buttons: 1, pointerId: 3 })
+    fireEvent.pointerMove(secondRow, { buttons: 1, pointerId: 3 })
     fireEvent.pointerUp(window, { pointerId: 3 })
     expect(screen.getByText('已选择 1 个会话')).toBeTruthy()
     expect((screen.getByText('one').closest('[role="treeitem"]')?.querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(true)
@@ -420,10 +419,10 @@ describe('WorkspaceBrowser', () => {
     fireEvent.pointerDown(secondRow, { button: 0, pointerId: 4 })
     fireEvent.pointerEnter(thirdRow, { buttons: 1, pointerId: 4 })
     fireEvent.pointerUp(window, { pointerId: 4 })
-    expect(screen.getByText('已选择 2 个会话')).toBeTruthy()
-    expect((screen.getByText('one').closest('[role="treeitem"]')?.querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(false)
-    expect((secondRow.querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(true)
-    expect((thirdRow.querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(true)
+    expect(screen.getByText('已选择 1 个会话')).toBeTruthy()
+    expect((screen.getByText('one').closest('[role="treeitem"]')?.querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(true)
+    expect((secondRow.querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(false)
+    expect((thirdRow.querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(false)
   })
 
   it('keeps a plain selection click as a single toggle after brush support is enabled', () => {
