@@ -32,6 +32,15 @@ New-Item -ItemType Directory -Path $portable | Out-Null
 
 Push-Location $repoRoot
 try {
+    pnpm run build:lib:host | Out-Host
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+    pnpm run build:lib:client | Out-Host
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+    pnpm run build:web | Out-Host
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
     node --import tsx/esm (Join-Path $root "build-runtime.ts") `
         --staging (Join-Path $build ".dsh-web-staging") `
         --output (Join-Path $portable "dsh\dsh-web.exe") | Out-Host

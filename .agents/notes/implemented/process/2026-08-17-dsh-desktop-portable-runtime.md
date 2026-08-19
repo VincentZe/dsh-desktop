@@ -12,13 +12,13 @@ The desktop shell starts the dsh web server as a child process, but a distribute
 
 `apps/cli` declares the workspace packages required by its production plugin graph as production dependencies. The runtime-closure verifier checks that this graph supplies every required workspace peer. The fixed Web entry resolves exactly the `@deepseek-ai/dsh-base` and `@deepseek-ai/dsh-web-app` patch files shipped with the CLI package; it does not load a profile manifest, a user patch, or a patch watcher.
 
-`desktop/build-runtime.ts` deploys the production dependency closure, materializes workspace links, and packages the fixed Web entry as one Node SEA executable. Native `.node` files and their `.dll` assets are included in the package. `desktop/build.ps1` places that executable at `build/portable/dsh/dsh-web.exe` beside the desktop executable, WebView2 loader, and portable configuration. The portable configuration launches the fixed executable directly; source builds continue to use PATH Node and the dynamic CLI defaults.
+`desktop/build-runtime.ts` deploys the production dependency closure into an isolated staging tree, materializes workspace links, follows the fixed Web entry's relative module imports, and removes packages outside the fixed composition. Platform-specific optional dependencies are retained only when the current target supports them, including nested dependencies resolved from their owning package. The fixed Web entry is a small Node SEA bootstrap at `build/portable/dsh/dsh-web.exe`; its Cordis and plugin runtime is copied beside it under `dsh-web-runtime`. Native `.node` files and their `.dll` assets are included in the sidecar. `desktop/build.ps1` places both parts beside the desktop executable, WebView2 loader, and portable configuration. The portable configuration launches the fixed executable directly; source builds continue to use PATH Node and the dynamic CLI defaults.
 
 The workspace lockfile pins Cordis and the package versions embedded in the executable. Changing Cordis, a bundled plugin, or the fixed composition requires rebuilding the CLI bundle and regenerating the portable package. Runtime profile installation is not an extension mechanism for this package.
 
 ## Alternatives considered
 
-**Keep Node and `lib/` beside the desktop executable.** This leaves the plugin graph and fixed profile mutable at runtime, so a deployed shell can run a different composition from the one validated with the desktop build.
+**Keep an unrestricted Node installation and mutable `lib/` beside the desktop executable.** This leaves the plugin graph and fixed profile mutable at runtime, so a deployed shell can run a different composition from the one validated with the desktop build. The sidecar is different: it is a generated, pruned package with no profile installation path.
 
 **Rely on PATH Node.js.** A fresh machine cannot start the desktop application, and the executable's behavior depends on the launching environment.
 
@@ -28,10 +28,10 @@ The workspace lockfile pins Cordis and the package versions embedded in the exec
 
 ## Verification
 
-The CLI TypeScript build and tsdown bundle complete for both the dynamic launcher and `web-bundle`. A rebuilt fixed executable starts with a clean `DSH_HOME`, emits `dsh web: http://127.0.0.1:<port>`, and serves the Web index with HTTP 200. The desktop Release build completes with the LunaUI framework and the portable directory contains `dsh-desktop.exe`, `dsh/dsh-web.exe`, `WebView2Loader.dll`, and `config.json`.
+The CLI TypeScript build and tsdown bundle complete for the dynamic launcher, the Web entry, and the stable bootstrap. The generated fixed executable starts the Web host and serves the Web index with HTTP 200; the same executable enters the Windows ACL runner and runs `git -C <workspace> status --short --branch` without passing runner flags to Git. The desktop Release build completes with the LunaUI framework and the portable directory contains `dsh-desktop.exe`, `dsh/dsh-web.exe`, `dsh/dsh-web-runtime`, `WebView2Loader.dll`, and `config.json`.
 
 The native launcher leaves `backend.cli` empty for the fixed executable and resolves only non-empty relative paths. After creating the child process, it closes the parent's inherited pipe writer so an early backend exit reaches the UI with its diagnostics instead of leaving the loading page until the timeout.
 
 ## Consequences
 
-The portable package is independent of the machine's Node PATH and starts a reproducible Web composition. The package contains the production dependency closure and is therefore substantially larger than the native executable alone. The fixed profile cannot accept a runtime plugin or profile patch; the release process must regenerate the executable after changes to its Cordis or plugin graph.
+The portable package is independent of the machine's Node PATH and starts a reproducible Web composition. The package contains the pruned production dependency closure and is therefore larger than the native executable alone. The bootstrap is independently replaceable from the fixed runtime sidecar, but the pair must be shipped together. The fixed profile cannot accept a runtime plugin or profile patch; the release process must regenerate the sidecar after changes to its Cordis or plugin graph.
