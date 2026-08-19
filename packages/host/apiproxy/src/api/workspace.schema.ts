@@ -7,7 +7,7 @@
 import { z } from 'zod'
 import type { RequestPayload, ResponseValue } from './rpc-map.ts'
 import type { Wire } from './rpc.schema.ts'
-import type { WorkspaceView } from './workspace.ts'
+import type { TrashedSession, WorkspaceView } from './workspace.ts'
 import { sessionIdSchema, workspaceIdSchema } from './sessions.schema.ts'
 
 export { workspaceIdSchema } from './sessions.schema.ts'
@@ -22,6 +22,12 @@ export const workspaceViewSchema = z.object({
   updatedAt: z.string(),
 }) satisfies z.ZodType<Wire<WorkspaceView>>
 
+/** One workspace recycle-bin row. */
+export const trashedSessionSchema = z.object({
+  sessionId: sessionIdSchema,
+  deletedAt: z.number().int().nonnegative(),
+}) satisfies z.ZodType<Wire<TrashedSession>>
+
 /** workspace.list request payload (empty object literal). */
 export const workspaceListRequestSchema = z.object({}) satisfies z.ZodType<Wire<RequestPayload<'workspace.list'>>>
 
@@ -29,6 +35,7 @@ export const workspaceListRequestSchema = z.object({}) satisfies z.ZodType<Wire<
 export const workspaceListValueSchema = z.object({
   items: z.array(workspaceViewSchema),
   archivedSessionIds: z.array(sessionIdSchema),
+  trashedSessions: z.array(trashedSessionSchema).default([]),
 }) satisfies z.ZodType<Wire<ResponseValue<'workspace.list'>>>
 
 /** workspace.create request payload: the existing directory to adopt. */
@@ -98,3 +105,13 @@ export const workspaceArchiveSessionRequestSchema = z.object({
 export const workspaceArchiveSessionValueSchema = z.object({
   archivedSessionIds: z.array(sessionIdSchema),
 }) satisfies z.ZodType<Wire<ResponseValue<'workspace.archiveSession'>>>
+
+/** workspace trash/restore/delete request payloads share one id field. */
+export const workspaceTrashSessionRequestSchema = z.object({
+  sessionId: sessionIdSchema,
+}) satisfies z.ZodType<Wire<RequestPayload<'workspace.trashSession'>>>
+
+/** Full recycle-bin snapshot returned after a mutation. */
+export const workspaceTrashSessionValueSchema = z.object({
+  trashedSessions: z.array(trashedSessionSchema),
+}) satisfies z.ZodType<Wire<ResponseValue<'workspace.trashSession'>>>

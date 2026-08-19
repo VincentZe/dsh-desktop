@@ -1,7 +1,7 @@
 /** Workspace baseline, incremental-frame, and unary-action owner. */
 
 import type {
-  HostFrame, IApiClient, RpcError, RpcRequest, RpcResult, SessionId, WorkspaceId, WorkspaceView,
+  HostFrame, IApiClient, RpcError, RpcRequest, RpcResult, SessionId, TrashedSession, WorkspaceId, WorkspaceView,
 } from '@deepseek-ai/dsh-api-remotes/client'
 import { transportError } from '@deepseek-ai/dsh-host-apiproxy/api'
 import { Notifier } from '../sessions/notifier.ts'
@@ -21,6 +21,8 @@ export interface WorkspaceListSnapshot {
    * lookups build their own transient Set where they need one.
    */
   archivedSessionIds: readonly SessionId[]
+  /** Sessions in the durable recycle bin, with their deletion timestamps. */
+  trashedSessions: readonly TrashedSession[]
   state: 'idle' | 'loading' | 'error'
   phase: WorkspaceListPhase
   error: RpcError | null
@@ -39,6 +41,7 @@ export class WorkspaceManager {
   // Full-snapshot state (list response / unary response / changed frame all
   // carry the complete set), so deltas never merge — installs replace.
   private archivedSessionIds: readonly SessionId[] = []
+  private trashedSessions: readonly TrashedSession[] = []
   private state: WorkspaceListSnapshot['state'] = 'idle'
   private phase: WorkspaceListPhase = 'pending'
   private error: RpcError | null = null
@@ -51,6 +54,8 @@ export class WorkspaceManager {
    * mirror of replaying refreshFrames over the item baseline.
    */
   private archivedSupersedesRefresh = false
+  /** A trash snapshot installed during refresh is newer than that baseline. */
+  private trashedSupersedesRefresh = false
   /** Latest local reorder request; only its unary echo may install order. */
   private orderRequestGeneration = 0
   /** Increments on order frames so a later remote commit outranks an older unary echo. */
@@ -99,6 +104,7 @@ export class WorkspaceManager {
           for (const delta of frames) items = applyWorkspaceDelta(items, delta)
           this.installViews(items)
           if (!this.archivedSupersedesRefresh) this.installArchived(result.value.archivedSessionIds)
+          if (!this.trashedSupersedesRefresh) this.installTrashed(result.value.trashedSessions)
           this.state = 'idle'
           this.phase = 'ready'
         } else {
@@ -113,6 +119,7 @@ export class WorkspaceManager {
       } finally {
         this.refreshFrames = null
         this.archivedSupersedesRefresh = false
+        this.trashedSupersedesRefresh = false
         this.inflight = null
         this.notifier.markDirty()
       }
@@ -231,6 +238,27 @@ export class WorkspaceManager {
     return result
   }
 
+  /** Move one session into the recycle bin and install the returned snapshot. */
+  async trashSession(sessionId: SessionId): Promise<RpcResult<{ trashedSessions: TrashedSession[] }>> {
+    const { result } = await this.api.workspace.trashSession({ sessionId })
+    if (result.ok) this.installTrashed(result.value.trashedSessions)
+    return result
+  }
+
+  /** Restore one session from the recycle bin and install the returned snapshot. */
+  async restoreSession(sessionId: SessionId): Promise<RpcResult<{ trashedSessions: TrashedSession[] }>> {
+    const { result } = await this.api.workspace.restoreSession({ sessionId })
+    if (result.ok) this.installTrashed(result.value.trashedSessions)
+    return result
+  }
+
+  /** Permanently remove one recycled session and install the returned snapshot. */
+  async deleteTrashedSession(sessionId: SessionId): Promise<RpcResult<{ trashedSessions: TrashedSession[] }>> {
+    const { result } = await this.api.workspace.deleteTrashedSession({ sessionId })
+    if (result.ok) this.installTrashed(result.value.trashedSessions)
+    return result
+  }
+
   /**
    * Host-frame entry. Non-workspace frames are ignored so the runtime can
    * fan one host stream out to both object managers.
@@ -245,6 +273,9 @@ export class WorkspaceManager {
     }
     else if (envelope.payload.type === 'host/archived-sessions-changed') {
       this.installArchived(envelope.payload.archivedSessionIds)
+    }
+    else if (envelope.payload.type === 'host/trashed-sessions-changed') {
+      this.installTrashed(envelope.payload.trashedSessions)
     }
   }
 
@@ -275,6 +306,7 @@ export class WorkspaceManager {
     return {
       items: this.itemViews(),
       archivedSessionIds: this.archivedSessionIds,
+      trashedSessions: this.trashedSessions,
       state: this.state,
       phase: this.phase,
       error: this.error,
@@ -291,6 +323,20 @@ export class WorkspaceManager {
     if (archivedSessionIds.length === this.archivedSessionIds.length
       && archivedSessionIds.every((id, index) => id === this.archivedSessionIds[index])) return
     this.archivedSessionIds = [...archivedSessionIds]
+    this.notifier.markDirty()
+  }
+
+  /** Replace the full durable recycle-bin snapshot when it changes. */
+  private installTrashed(trashedSessions: readonly TrashedSession[]): void {
+    if (this.refreshFrames !== null) this.trashedSupersedesRefresh = true
+    if (trashedSessions.length === this.trashedSessions.length
+      && trashedSessions.every((item, index) => {
+        const previous = this.trashedSessions[index]
+        return previous !== undefined
+          && item.sessionId === previous.sessionId
+          && item.deletedAt === previous.deletedAt
+      })) return
+    this.trashedSessions = trashedSessions.map(item => ({ ...item }))
     this.notifier.markDirty()
   }
 

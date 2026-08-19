@@ -91,4 +91,10 @@ export interface IWorkspaces {
    * @param sessionId - session to archive.
    */
   archiveSession(sessionId: SessionId): Promise<void>
+  /** Move a session into the recycle bin. */
+  trashSession(sessionId: SessionId): Promise<void>
+  /** Restore a session from the recycle bin. */
+  restoreSession(sessionId: SessionId): Promise<void>
+  /** Permanently remove a session already in the recycle bin. */
+  deleteTrashedSession(sessionId: SessionId): Promise<void>
 }

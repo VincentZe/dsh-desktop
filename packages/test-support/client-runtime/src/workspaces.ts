@@ -212,4 +212,46 @@ export class TestWorkspaces implements IWorkspaces {
       draft.archivedSessionIds = [...draft.archivedSessionIds, sessionId]
     })
   }
+
+  /** Move a session into the recycle bin (recorded). */
+  async trashSession(sessionId: SessionId): Promise<void> {
+    this.calls.push({ method: 'trashSession', args: [sessionId] })
+    const stub = this.stubs.get('trashSession')
+    if (stub !== undefined) {
+      await (stub(sessionId) as Promise<void>)
+      return
+    }
+    await this.update((draft) => {
+      const current = draft.trashedSessions ?? []
+      if (!current.some(item => item.sessionId === sessionId)) {
+        draft.trashedSessions = [...current, { sessionId, deletedAt: Date.now() }]
+      }
+    })
+  }
+
+  /** Restore a session from the recycle bin (recorded). */
+  async restoreSession(sessionId: SessionId): Promise<void> {
+    this.calls.push({ method: 'restoreSession', args: [sessionId] })
+    const stub = this.stubs.get('restoreSession')
+    if (stub !== undefined) {
+      await (stub(sessionId) as Promise<void>)
+      return
+    }
+    await this.update((draft) => {
+      draft.trashedSessions = (draft.trashedSessions ?? []).filter(item => item.sessionId !== sessionId)
+    })
+  }
+
+  /** Permanently remove a session from the recycle bin (recorded). */
+  async deleteTrashedSession(sessionId: SessionId): Promise<void> {
+    this.calls.push({ method: 'deleteTrashedSession', args: [sessionId] })
+    const stub = this.stubs.get('deleteTrashedSession')
+    if (stub !== undefined) {
+      await (stub(sessionId) as Promise<void>)
+      return
+    }
+    await this.update((draft) => {
+      draft.trashedSessions = (draft.trashedSessions ?? []).filter(item => item.sessionId !== sessionId)
+    })
+  }
 }

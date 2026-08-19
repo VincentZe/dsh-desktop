@@ -12,15 +12,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import {
-  Button, IconCloseFill14, IconPersonalizationOutline16,
-  IconProjectAddOutline16, IconSearchOutline16, Menu, Modal, Tooltip,
+  Button, IconCheckOutline16, IconCloseFill14, IconCloseOutline16, IconPersonalizationOutline16,
+  IconProjectAddOutline16, IconSearchOutline16, IconTrashOutline16, Menu, Modal, Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
   SessionId, SessionListState, SessionSearchResultItem, WorkspaceId, WorkspaceView,
 } from '@deepseek-ai/dsh-client-runtime/client'
 import type { WorkspaceBrowserProps } from './contract/slots.ts'
 import type { SessionNode, SessionOrderBy } from './tree.ts'
-import { deriveFlat, deriveGroups, deriveSearchResults, UNGROUPED_KEY } from './tree.ts'
+import { deriveFlat, deriveGroups, deriveSearchResults, TRASH_KEY, UNGROUPED_KEY } from './tree.ts'
 import { ProjectRowItem, SearchResultItem, SessionNodeItem } from './rows/Rows.tsx'
 import { FLAT_SESSION_ORDER_KEY } from './stores.ts'
 import { WorkspacePickFlow } from './WorkspacePicker.tsx'
@@ -207,6 +207,17 @@ interface WorkspaceDragState {
   over: { id: WorkspaceId; half: 'before' | 'after' } | null
 }
 
+/** Selection operation applied by one held primary-pointer gesture. */
+type SelectionBrushOperation = 'replace' | 'add' | 'remove'
+
+/** Rows changed by one held primary-pointer gesture. */
+interface SelectionBrushState {
+  pointerId: number
+  originId: SessionId
+  operation: SelectionBrushOperation
+  moved: boolean
+}
+
 /** Resolve an insertion side from the full rendered workspace group. */
 function workspaceGroupHalf(e: { clientY: number; currentTarget: HTMLElement }): 'before' | 'after' {
   const rect = e.currentTarget.getBoundingClientRect()
@@ -233,6 +244,8 @@ type SessionTreeProps = Pick<
   setSessionOrder: (accountKey: string, order: string[]) => void
   /** Registry-global archive set (hidden rows). */
   archivedSessionIds: readonly SessionNode['id'][]
+  /** Durable recycle-bin rows. */
+  trashedSessionIds: readonly SessionNode['id'][]
   /** Open the browser-owned rename dialog for a real Workspace group. */
   onRenameRequest: (workspaceId: WorkspaceId, currentTitle: string) => void
   /** Open the browser-owned delete-confirmation dialog for a real Workspace group. */
@@ -241,14 +254,32 @@ type SessionTreeProps = Pick<
   onSessionRename: (sessionId: SessionNode['id'], currentTitle: string) => void
   /** Archive a session (row menu action; the row disappears on the state echo). */
   onSessionArchive: (sessionId: SessionNode['id']) => void
+  /** Move one session to the recycle bin. */
+  onSessionTrash: (sessionId: SessionNode['id']) => void
+  /** Restore one recycled session. */
+  onSessionRestore: (sessionId: SessionNode['id']) => void
+  /** Permanently delete one recycled session. */
+  onSessionDeleteForever: (sessionId: SessionNode['id']) => void
+  /** Current multi-selection state. */
+  selectionMode: boolean
+  selectedSessionIds: readonly SessionNode['id'][]
+  onStartSelection: (sessionId: SessionNode['id']) => void
+  onToggleSelection: (sessionId: SessionNode['id']) => void
+  onTrashSelected: () => void
+  /** Start a primary-pointer selection brush and choose its set operation. */
+  onSelectionBrushStart: (sessionId: SessionNode['id'], pointerId: number, operation: SelectionBrushOperation) => void
+  /** Apply the brush operation to a session row entered while held. */
+  onSelectionBrushEnter: (sessionId: SessionNode['id'], pointerId: number) => void
   /** Session order behavior: fixed after edits, or additionally promoted by user activity. */
   orderBy: SessionOrderBy
 }
 
 /** The scrolling session tree; unmounting drops the sessions subscription and expand-all state. */
 function SessionTree({
-  useSessions, startSession, open, forkSession, workspaces, archivedSessionIds,
-  onRenameRequest, onDeleteRequest, onSessionRename, onSessionArchive,
+  useSessions, startSession, open, forkSession, workspaces, archivedSessionIds, trashedSessionIds,
+  onRenameRequest, onDeleteRequest, onSessionRename, onSessionArchive, onSessionTrash,
+  onSessionRestore, onSessionDeleteForever, selectionMode, selectedSessionIds,
+  onStartSelection, onToggleSelection, onTrashSelected, onSelectionBrushStart, onSelectionBrushEnter,
   insertWorkspaceBefore, insertSessionBefore, orderBy,
   groupExpansion, setGroupExpanded,
   sessionOrderByAccount, sessionUpdatedAtByAccount, syncSessionOrderAccount, setSessionOrder, t,
@@ -266,8 +297,10 @@ function SessionTree({
   useNativeDragAcceptance(nativeDragActive)
   const currentGroup = current === undefined
     ? undefined
-    : (workspaces.find(w => w.sessionIds.includes(current))?.workspaceId as string | undefined)
-      ?? UNGROUPED_KEY
+    : trashedSessionIds.includes(current)
+      ? TRASH_KEY
+      : (workspaces.find(w => w.sessionIds.includes(current))?.workspaceId as string | undefined)
+        ?? UNGROUPED_KEY
   useEffect(() => {
     if (current === undefined || currentGroup === undefined || Object.hasOwn(groupExpansion, currentGroup)) return
     setGroupExpanded(currentGroup, true)
@@ -324,8 +357,8 @@ function SessionTree({
       ...(sessionOrderByAccount[UNGROUPED_KEY] === undefined
         ? {}
         : { ungroupedOrder: sessionOrderByAccount[UNGROUPED_KEY] }),
-    }),
-    [list, orderedWorkspaces, archivedSessionIds, expandedGroups, sessionOrderByAccount],
+    }, trashedSessionIds),
+    [list, orderedWorkspaces, archivedSessionIds, expandedGroups, sessionOrderByAccount, trashedSessionIds],
   )
   const now = Date.now()
   const commitSessionDrag = (activeDrag: DragState, over: NonNullable<DragState['over']>): void => {
@@ -463,8 +496,8 @@ function SessionTree({
                     startSession(group.workspaceId)
                   }
                 }}
-                drag={workspaceDragProps}
-                actions={group.workspaceId === undefined
+                drag={group.isTrash ? undefined : workspaceDragProps}
+                actions={group.workspaceId === undefined || group.isTrash
                   ? undefined
                   : {
                     rename: () => {
@@ -516,7 +549,19 @@ function SessionTree({
                     onRename={onSessionRename}
                     onFork={forkSession}
                     onArchive={onSessionArchive}
-                    drag={dragProps}
+                    drag={selectionMode || group.isTrash ? undefined : dragProps}
+                    isTrash={group.isTrash}
+                    selectionMode={selectionMode}
+                    selectedForBulk={selectedSessionIds.includes(node.id)}
+                    selectedCount={selectedSessionIds.length}
+                    onStartSelection={onStartSelection}
+                    onToggleSelection={onToggleSelection}
+                    onTrashSelected={onTrashSelected}
+                    onSelectionBrushStart={onSelectionBrushStart}
+                    onSelectionBrushEnter={onSelectionBrushEnter}
+                    onTrash={onSessionTrash}
+                    onRestore={onSessionRestore}
+                    onDeleteForever={onSessionDeleteForever}
                     t={t}
                   />
                 )
@@ -544,7 +589,10 @@ function SessionTree({
 
 /** The flat "In one list" body: every session is one draggable top-level row. */
 function FlatList({
-  useSessions, open, forkSession, onSessionRename, onSessionArchive, archivedSessionIds,
+  useSessions, open, forkSession, onSessionRename, onSessionArchive, onSessionTrash,
+  onSessionRestore, onSessionDeleteForever, archivedSessionIds, trashedSessionIds,
+  selectionMode, selectedSessionIds, onStartSelection, onToggleSelection, onTrashSelected,
+  onSelectionBrushStart, onSelectionBrushEnter,
   orderBy, sessionOrderByAccount, sessionUpdatedAtByAccount, syncSessionOrderAccount, setSessionOrder, t,
 }: Pick<
   SessionTreeProps,
@@ -553,7 +601,18 @@ function FlatList({
   | 'forkSession'
   | 'onSessionRename'
   | 'onSessionArchive'
+  | 'onSessionTrash'
+  | 'onSessionRestore'
+  | 'onSessionDeleteForever'
   | 'archivedSessionIds'
+  | 'trashedSessionIds'
+  | 'selectionMode'
+  | 'selectedSessionIds'
+  | 'onStartSelection'
+  | 'onToggleSelection'
+  | 'onTrashSelected'
+  | 'onSelectionBrushStart'
+  | 'onSelectionBrushEnter'
   | 'orderBy'
   | 'sessionOrderByAccount'
   | 'sessionUpdatedAtByAccount'
@@ -563,8 +622,8 @@ function FlatList({
 >) {
   const list = useSessions(s => s)
   const baseRows = useMemo(
-    () => deriveFlat(list, archivedSessionIds),
-    [list, archivedSessionIds],
+    () => deriveFlat(list, archivedSessionIds, trashedSessionIds),
+    [list, archivedSessionIds, trashedSessionIds],
   )
   const sessionIds = useMemo(() => baseRows.map(row => row.id), [baseRows])
   const previousOrderBy = useRef(orderBy)
@@ -632,8 +691,19 @@ function FlatList({
               onRename={onSessionRename}
               onFork={forkSession}
               onArchive={onSessionArchive}
+              onTrash={onSessionTrash}
+              onRestore={onSessionRestore}
+              onDeleteForever={onSessionDeleteForever}
+              selectionMode={selectionMode}
+              selectedForBulk={selectedSessionIds.includes(node.id)}
+              selectedCount={selectedSessionIds.length}
+              onStartSelection={onStartSelection}
+              onToggleSelection={onToggleSelection}
+              onTrashSelected={onTrashSelected}
+              onSelectionBrushStart={onSelectionBrushStart}
+              onSelectionBrushEnter={onSelectionBrushEnter}
               flat
-              drag={{
+              drag={selectionMode ? undefined : {
                 start: () => {
                   dropCommitted.current = false
                   setDrag({ accountKey: FLAT_SESSION_ORDER_KEY, sessionId: node.id, over: null })
@@ -675,6 +745,7 @@ function SearchResults({
   open,
   workspaces,
   archivedSessionIds,
+  trashedSessionIds,
   query,
   remote,
   resultLimit,
@@ -682,6 +753,7 @@ function SearchResults({
 }: Pick<SessionTreeProps, 'useSessions' | 'open' | 't'> & {
   workspaces: readonly WorkspaceView[]
   archivedSessionIds: readonly SessionNode['id'][]
+  trashedSessionIds: readonly SessionNode['id'][]
   query: string
   remote: RemoteSearchState
   resultLimit: number
@@ -691,8 +763,8 @@ function SearchResults({
     ? remote
     : { query, status: 'loading' as const, items: [], hasMore: false }
   const results = useMemo(
-    () => deriveSearchResults(list, workspaces, query, archivedSessionIds, currentRemote, resultLimit),
-    [list, workspaces, query, archivedSessionIds, currentRemote, resultLimit],
+    () => deriveSearchResults(list, workspaces, query, archivedSessionIds, currentRemote, resultLimit, trashedSessionIds),
+    [list, workspaces, query, archivedSessionIds, currentRemote, resultLimit, trashedSessionIds],
   )
   const pending = currentRemote.status === 'loading'
   const failed = currentRemote.status === 'error'
@@ -753,6 +825,9 @@ export function WorkspaceBrowser({
   deleteWorkspace,
   insertWorkspaceBefore,
   archiveSession,
+  trashSession,
+  restoreSession,
+  deleteTrashedSession,
   insertSessionBefore,
   createWorkspace,
   searchSessions,
@@ -764,6 +839,12 @@ export function WorkspaceBrowser({
   const workspaces = useWorkspaces(state => state.items)
   const workspacePhase = useWorkspaces(state => state.phase)
   const archivedSessionIds = useWorkspaces(state => state.archivedSessionIds)
+  const trashedSessions = useWorkspaces(state => state.trashedSessions)
+  const trashedSessionIds = useMemo(
+    () => (trashedSessions ?? []).map(item => item.sessionId),
+    [trashedSessions],
+  )
+  const sessionList = useSessions(state => state)
   // Live occupancy of this surface's directory-flow hole (the same source the
   // flow reads): a composition without a picking affordance can add nothing.
   const directoryFlowAvailable = useDirectoryFlow(occupied => occupied)
@@ -776,15 +857,133 @@ export function WorkspaceBrowser({
     if (workspacePhase !== 'ready') return
     actions.retainAccountKeys([
       UNGROUPED_KEY,
+      TRASH_KEY,
       FLAT_SESSION_ORDER_KEY,
       ...workspaces.map(workspace => workspace.workspaceId as string),
     ])
   }, [actions.retainAccountKeys, workspacePhase, workspaces])
+  const [selectionMode, setSelectionMode] = useState(false)
+  const [selectedSessionIds, setSelectedSessionIds] = useState<SessionId[]>([])
+  const selectionBrush = useRef<SelectionBrushState | null>(null)
+  const suppressSelectionClick = useRef(false)
+  const selectableSessionIds = useMemo(() => {
+    const archived = new Set(archivedSessionIds)
+    const trashed = new Set(trashedSessionIds)
+    return sessionList.ids.filter((id) => {
+      const session = sessionList.byId[id]
+      return session !== undefined && !session.blank && session.origin !== 'subagent'
+        && !archived.has(id) && !trashed.has(id)
+    })
+  }, [archivedSessionIds, sessionList, trashedSessionIds])
+  useEffect(() => {
+    const selectable = new Set(selectableSessionIds)
+    setSelectedSessionIds(current => current.filter(id => selectable.has(id)))
+  }, [selectableSessionIds])
+  const startSelection = (sessionId: SessionId): void => {
+    setSelectionMode(true)
+    setSelectedSessionIds(current => current.includes(sessionId) ? current : [...current, sessionId])
+  }
+  const toggleSelection = (sessionId: SessionId): void => {
+    setSelectedSessionIds(current => current.includes(sessionId)
+      ? current.filter(id => id !== sessionId)
+      : [...current, sessionId])
+  }
+  const startSelectionBrush = (sessionId: SessionId, pointerId: number, operation: SelectionBrushOperation): void => {
+    if (!selectionMode) return
+    selectionBrush.current = { pointerId, originId: sessionId, operation, moved: false }
+  }
+  const enterSelectionBrush = (sessionId: SessionId, pointerId: number): void => {
+    const brush = selectionBrush.current
+    if (!selectionMode || brush === null || brush.pointerId !== pointerId || brush.originId === sessionId) return
+    const firstMove = !brush.moved
+    brush.moved = true
+    setSelectedSessionIds((current) => {
+      if (brush.operation === 'remove') {
+        return current.filter(id => id !== brush.originId && id !== sessionId)
+      }
+      if (brush.operation === 'replace' && firstMove) {
+        return [brush.originId, sessionId]
+      }
+      const next = current.includes(brush.originId) ? [...current] : [...current, brush.originId]
+      return next.includes(sessionId) ? next : [...next, sessionId]
+    })
+  }
+  const handleSelectionToggle = (sessionId: SessionId): void => {
+    if (suppressSelectionClick.current) {
+      suppressSelectionClick.current = false
+      return
+    }
+    toggleSelection(sessionId)
+  }
+  useEffect(() => {
+    const clearSelectionBrush = (): void => {
+      const brush = selectionBrush.current
+      if (brush?.moved === true) suppressSelectionClick.current = true
+      selectionBrush.current = null
+    }
+    const clearSuppressedClick = (): void => {
+      suppressSelectionClick.current = false
+    }
+    window.addEventListener('pointerup', clearSelectionBrush)
+    window.addEventListener('pointercancel', clearSelectionBrush)
+    window.addEventListener('pointerdown', clearSuppressedClick)
+    return () => {
+      window.removeEventListener('pointerup', clearSelectionBrush)
+      window.removeEventListener('pointercancel', clearSelectionBrush)
+      window.removeEventListener('pointerdown', clearSuppressedClick)
+    }
+  }, [])
+  useEffect(() => {
+    if (!selectionMode) selectionBrush.current = null
+  }, [selectionMode])
+  const selectAll = (): void => {
+    setSelectionMode(true)
+    setSelectedSessionIds([...selectableSessionIds])
+  }
+  const exitSelection = (): void => {
+    setSelectionMode(false)
+    setSelectedSessionIds([])
+  }
+  const onSessionTrash = (sessionId: SessionId): void => {
+    if (selectionMode) exitSelection()
+    trashSession(sessionId).catch((reason: unknown) => {
+      console.warn('session trash rejected:', reason)
+    })
+  }
+  const onTrashSelected = (): void => {
+    const ids = [...selectedSessionIds]
+    if (ids.length === 0) return
+    exitSelection()
+    void (async () => {
+      // Each response contains the complete recycle-bin snapshot. Serializing
+      // the calls keeps a slower earlier response from overwriting a newer one.
+      for (const id of ids) {
+        try {
+          await trashSession(id)
+        } catch (reason: unknown) {
+          console.warn('session trash rejected:', reason)
+        }
+      }
+    })()
+  }
+  const onSessionRestore = (sessionId: SessionId): void => {
+    restoreSession(sessionId).catch((reason: unknown) => {
+      console.warn('session restore rejected:', reason)
+    })
+  }
+  const onSessionDeleteForever = (sessionId: SessionId): void => {
+    deleteTrashedSession(sessionId).catch((reason: unknown) => {
+      console.warn('session permanent delete rejected:', reason)
+    })
+  }
   // The query outlives the tree and the input (both wide-only) so collapsing
   // does not silently drop an in-progress filter.
   const [query, setQuery] = useState('')
   const [searchExpanded, setSearchExpanded] = useState(false)
   const normalizedQuery = sanitizeSearchQuery(query).trim()
+  useEffect(() => {
+    if (normalizedQuery !== '' && selectionMode) exitSelection()
+  }, [normalizedQuery, selectionMode])
   const [remoteSearch, setRemoteSearch] = useState<RemoteSearchState>({
     query: '',
     status: 'idle',
@@ -975,10 +1174,13 @@ export function WorkspaceBrowser({
   return (
     <div className={clsx(css.root, !wide && css.rail)}>
       <div className={css.sectionHeader}>
-        {wide && (
+        {wide && !selectionMode && (
           <span className={clsx(css.sectionLabel, css.wide, searchExpanded && css.sectionLabelHidden)}>
             {groupBy === 'flat' ? t('section.sessions') : t('section.workspaces')}
           </span>
+        )}
+        {wide && selectionMode && (
+          <span className={css.sectionLabel}>{t('select.count', { n: selectedSessionIds.length })}</span>
         )}
         {wide && (
           <div className={clsx(css.searchSlot, searchExpanded && css.searchSlotExpanded)}>
@@ -1047,6 +1249,55 @@ export function WorkspaceBrowser({
               t={t}
             />
           )}
+          {wide && normalizedQuery === '' && !selectionMode && (
+            <Tooltip label={t('select.sessions')} side="bottom" delayMs={500}>
+              <button
+                type="button"
+                className={css.iconButton}
+                aria-label={t('select.sessions')}
+                disabled={selectableSessionIds.length === 0}
+                onClick={() => { setSelectionMode(true) }}
+              >
+                <IconCheckOutline16 />
+              </button>
+            </Tooltip>
+          )}
+          {wide && normalizedQuery === '' && selectionMode && (
+            <>
+              <Tooltip label={t('select.all')} side="bottom" delayMs={500}>
+                <button
+                  type="button"
+                  className={css.iconButton}
+                  aria-label={t('select.all')}
+                  disabled={selectedSessionIds.length === selectableSessionIds.length}
+                  onClick={selectAll}
+                >
+                  <IconCheckOutline16 />
+                </button>
+              </Tooltip>
+              <Tooltip label={t('delete.selected')} side="bottom" delayMs={500}>
+                <button
+                  type="button"
+                  className={css.iconButton}
+                  aria-label={t('delete.selected')}
+                  disabled={selectedSessionIds.length === 0}
+                  onClick={onTrashSelected}
+                >
+                  <IconTrashOutline16 />
+                </button>
+              </Tooltip>
+              <Tooltip label={t('select.exit')} side="bottom" delayMs={500}>
+                <button
+                  type="button"
+                  className={css.iconButton}
+                  aria-label={t('select.exit')}
+                  onClick={exitSelection}
+                >
+                  <IconCloseOutline16 />
+                </button>
+              </Tooltip>
+            </>
+          )}
           {/* Adding is the button's one action, so a composition with no
               picking affordance has nothing to offer here: the region hides the
               button rather than leaving a dead one in the header. */}
@@ -1113,6 +1364,7 @@ export function WorkspaceBrowser({
               open={open}
               workspaces={workspaces}
               archivedSessionIds={archivedSessionIds}
+              trashedSessionIds={trashedSessionIds}
               query={normalizedQuery}
               remote={remoteSearch}
               resultLimit={searchResultLimit}
@@ -1124,7 +1376,17 @@ export function WorkspaceBrowser({
               <FlatList
                 useSessions={useSessions} open={open} forkSession={forkSession}
                 onSessionRename={onSessionRename} onSessionArchive={onSessionArchive}
+                onSessionTrash={onSessionTrash} onSessionRestore={onSessionRestore}
+                onSessionDeleteForever={onSessionDeleteForever}
                 archivedSessionIds={archivedSessionIds}
+                trashedSessionIds={trashedSessionIds}
+                selectionMode={selectionMode}
+                selectedSessionIds={selectedSessionIds}
+                onStartSelection={startSelection}
+                onToggleSelection={handleSelectionToggle}
+                onTrashSelected={onTrashSelected}
+                onSelectionBrushStart={startSelectionBrush}
+                onSelectionBrushEnter={enterSelectionBrush}
                 orderBy={orderBy}
                 sessionOrderByAccount={sessionOrderByAccount}
                 sessionUpdatedAtByAccount={sessionUpdatedAtByAccount}
@@ -1138,6 +1400,9 @@ export function WorkspaceBrowser({
                 useSessions={useSessions}
                 onSessionRename={onSessionRename}
                 onSessionArchive={onSessionArchive}
+                onSessionTrash={onSessionTrash}
+                onSessionRestore={onSessionRestore}
+                onSessionDeleteForever={onSessionDeleteForever}
                 forkSession={forkSession}
                 workspaces={workspaces}
                 groupExpansion={groupExpansion}
@@ -1147,6 +1412,14 @@ export function WorkspaceBrowser({
                 syncSessionOrderAccount={actions.syncSessionOrderAccount}
                 setSessionOrder={actions.setSessionOrder}
                 archivedSessionIds={archivedSessionIds}
+                trashedSessionIds={trashedSessionIds}
+                selectionMode={selectionMode}
+                selectedSessionIds={selectedSessionIds}
+                onStartSelection={startSelection}
+                onToggleSelection={handleSelectionToggle}
+                onTrashSelected={onTrashSelected}
+                onSelectionBrushStart={startSelectionBrush}
+                onSelectionBrushEnter={enterSelectionBrush}
                 startSession={startSession}
                 open={open}
                 insertWorkspaceBefore={insertWorkspaceBefore}

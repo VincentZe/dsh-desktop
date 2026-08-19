@@ -24,6 +24,14 @@
   background: var(--dsw-alias-interactive-bg-hover);
 }
 
+.sessionRow.bulkSelected {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.trashSessionRow {
+  color: var(--dsw-alias-label-secondary);
+}
+
 .searchResultRow {
   display: flex;
   flex-direction: column;
@@ -133,6 +141,21 @@
   align-items: center;
   justify-content: center;
   color: var(--dsw-alias-label-tertiary);
+}
+
+.selectionCheckbox {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin: 0 2px 0 0;
+  accent-color: var(--dsw-alias-state-business-primary);
+  cursor: pointer;
+}
+
+.contextMenuAnchor {
+  display: inline-block;
+  width: 0;
+  height: 0;
 }
 
 .visuallyHidden {

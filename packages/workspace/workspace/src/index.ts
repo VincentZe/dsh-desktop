@@ -18,12 +18,12 @@ import type { WorkspaceEntityHost } from './entity.ts'
 export { WorkspaceMoveInvalidError } from './entity.ts'
 import { realpathNormalize } from './paths.ts'
 import { workspaceDomainSpec } from './spec.ts'
-import type { WorkspaceDomainState, WorkspaceRecord } from './spec.ts'
+import type { TrashedSession, WorkspaceDomainState, WorkspaceRecord } from './spec.ts'
 import type { Workspace, WorkspaceId as WorkspaceIdBrand } from './types.ts'
 
 export type { Workspace } from './types.ts'
-export { workspaceDomainState, workspaceRecord, workspaceDomainSpec } from './spec.ts'
-export type { WorkspaceDomainState, WorkspaceRecord } from './spec.ts'
+export { trashedSession, workspaceDomainState, workspaceRecord, workspaceDomainSpec } from './spec.ts'
+export type { TrashedSession, WorkspaceDomainState, WorkspaceRecord } from './spec.ts'
 export { realpathNormalize } from './paths.ts'
 
 /** Identifies one workspace record (see `src/types.ts` for the brand rationale). */
@@ -52,6 +52,19 @@ export class WorkspaceUnknownSessionError extends Error {
   }
 }
 
+/** A trash request named a session absent from live memory and persistence. */
+export class WorkspaceTrashUnknownSessionError extends Error {
+  /** @param sessionId - The unknown session id. */
+  constructor(readonly sessionId: SessionId) {
+    super(`cannot trash session '${sessionId}': live sessions and session persistence hold no such session`)
+    this.name = 'WorkspaceTrashUnknownSessionError'
+  }
+}
+
+/** Seven-day recycle-bin retention, measured from the durable deletion marker. */
+export const TRASH_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
+const TRASH_CLEANUP_INTERVAL_MS = 60 * 60 * 1000
+
 /** A workspace reorder named a source or anchor absent from the durable registry order. */
 export class WorkspaceOrderInvalidError extends Error {
   /**
@@ -67,6 +80,18 @@ export class WorkspaceOrderInvalidError extends Error {
 declare module '@deepseek-ai/cordis' {
   interface Context {
     workspaceRegistry: WorkspaceRegistry
+  }
+
+  interface Events {
+    /**
+     * A recycled session's durable log was physically removed. The event is
+     * emitted after the recycle-bin record is updated, so Host consumers can
+     * invalidate cold-session list projections without guessing whether a
+     * removed trash entry was restored or deleted.
+     * @param sessionId - the session whose durable log was removed.
+     * @mode emit
+     */
+    'workspace/session-deleted'(sessionId: SessionId): void
   }
 }
 
@@ -125,6 +150,7 @@ export class WorkspaceRegistry extends Service {
 
     await this.recoverPendingMutation()
     this.validateStoredState(this.state)
+    await this.purgeExpiredTrash()
     if (!this.state.initialized) {
       const headers = await this.ctx.sessionPersistence.list()
       await this.replaceHeaderIndex(headers)
@@ -137,6 +163,8 @@ export class WorkspaceRegistry extends Service {
     this.validateStoredState(this.requireState())
     this.rebuildEntities()
     this.reportFilteredCandidates()
+    const cleanup = setInterval(() => { void this.purgeExpiredTrash() }, TRASH_CLEANUP_INTERVAL_MS)
+    this.ctx.effect(() => () => { clearInterval(cleanup) }, 'workspace.trashCleanup')
   }
 
   /**
@@ -234,6 +262,16 @@ export class WorkspaceRegistry extends Service {
     return this.requireState().archivedSessionIds
   }
 
+  /** Current recycle-bin records in deletion order. */
+  get trashedSessions(): readonly TrashedSession[] {
+    return this.requireState().trashedSessions
+  }
+
+  /** Cache session headers already read by the host session-list operation. */
+  async cacheSessionHeaders(headers: readonly SessionHeader[]): Promise<void> {
+    await this.indexHeaders(headers)
+  }
+
   /**
    * Archive one session durably. The session must exist (live or in session
    * persistence); its workspace accounting — or lack of one — is irrelevant.
@@ -252,6 +290,83 @@ export class WorkspaceRegistry extends Service {
       const state = this.requireState()
       await this.setState({ ...state, archivedSessionIds: [...state.archivedSessionIds, sessionId] })
     })
+  }
+
+  /** Move one session into the durable recycle bin without touching its log. */
+  trashSession(sessionId: SessionId): Promise<void> {
+    return this.enqueueOperation(async () => {
+      if (this.requireState().trashedSessions.some(item => item.sessionId === sessionId)) return
+      if (!(await this.sessionKnown(sessionId))) throw new WorkspaceTrashUnknownSessionError(sessionId)
+      const state = this.requireState()
+      await this.setState({
+        ...state,
+        trashedSessions: [...state.trashedSessions, { sessionId, deletedAt: Date.now() }],
+      })
+    })
+  }
+
+  /** Restore one session from the recycle bin before its retention expires. */
+  restoreSession(sessionId: SessionId): Promise<void> {
+    return this.enqueueOperation(async () => {
+      const state = this.requireState()
+      const next = state.trashedSessions.filter(item => item.sessionId !== sessionId)
+      if (next.length === state.trashedSessions.length) return
+      await this.setState({ ...state, trashedSessions: next })
+    })
+  }
+
+  /** Permanently delete one recycled session immediately. */
+  deleteTrashedSession(sessionId: SessionId): Promise<boolean> {
+    return this.enqueueOperation(async () => {
+      const state = this.requireState()
+      if (!state.trashedSessions.some(item => item.sessionId === sessionId)) return false
+      const persistence = this.ctx.get('sessionPersistence')
+      if (persistence === undefined) throw new Error('cannot permanently delete a session without persistence')
+      await persistence.remove(sessionId)
+      await this.setState({
+        ...state,
+        trashedSessions: state.trashedSessions.filter(item => item.sessionId !== sessionId),
+      })
+      this.ctx.emit('workspace/session-deleted', sessionId)
+      return true
+    })
+  }
+
+  /** Remove expired cold sessions and retain live ones for a later cleanup pass. */
+  private async purgeExpiredTrash(now = Date.now()): Promise<void> {
+    const state = this.requireState()
+    const expired = state.trashedSessions.filter(item => now - item.deletedAt >= TRASH_RETENTION_MS)
+    if (expired.length === 0) return
+    const persistence = this.ctx.get('sessionPersistence')
+    if (persistence === undefined) return
+    const kept: TrashedSession[] = []
+    const removedSessionIds: SessionId[] = []
+    for (const item of state.trashedSessions) {
+      if (now - item.deletedAt < TRASH_RETENTION_MS) {
+        kept.push(item)
+        continue
+      }
+      if (this.ctx.get('sessions')?.get(item.sessionId) !== undefined) {
+        kept.push(item)
+        continue
+      }
+      try {
+        await persistence.remove(item.sessionId)
+        removedSessionIds.push(item.sessionId)
+      } catch (error: unknown) {
+        kept.push(item)
+        this.ctx.logger.warn(`workspace: recycle-bin cleanup for session "${item.sessionId}" failed: ${String(error)}`)
+      }
+    }
+    const unchanged = kept.length === state.trashedSessions.length
+      && kept.every((item, index) => {
+        const previous = state.trashedSessions[index]
+        return previous !== undefined
+          && item.sessionId === previous.sessionId
+          && item.deletedAt === previous.deletedAt
+      })
+    if (!unchanged) await this.setState({ ...state, trashedSessions: kept })
+    for (const sessionId of removedSessionIds) this.ctx.emit('workspace/session-deleted', sessionId)
   }
 
   /**
@@ -331,6 +446,7 @@ export class WorkspaceRegistry extends Service {
         initialized: true,
         workspaceIds: [id, ...state.workspaceIds],
         archivedSessionIds: state.archivedSessionIds,
+        trashedSessions: state.trashedSessions,
       })
     } catch (error) {
       this.entities.delete(id)
@@ -363,6 +479,7 @@ export class WorkspaceRegistry extends Service {
       initialized: true,
       workspaceIds: state.workspaceIds.filter(workspaceId => workspaceId !== id),
       archivedSessionIds: state.archivedSessionIds,
+      trashedSessions: state.trashedSessions,
     }
     await this.setState({
       ...nextState,
@@ -420,6 +537,7 @@ export class WorkspaceRegistry extends Service {
       initialized: state.initialized,
       workspaceIds: state.workspaceIds,
       archivedSessionIds: state.archivedSessionIds,
+      trashedSessions: state.trashedSessions,
     })
   }
 
@@ -502,9 +620,19 @@ export class WorkspaceRegistry extends Service {
       .map(([id]) => id)
 
     if (!sameIds(state.workspaceIds, workspaceIds)) {
-      await this.setState({ initialized: false, workspaceIds, archivedSessionIds: state.archivedSessionIds })
+      await this.setState({
+        initialized: false,
+        workspaceIds,
+        archivedSessionIds: state.archivedSessionIds,
+        trashedSessions: state.trashedSessions,
+      })
     }
-    await this.setState({ initialized: true, workspaceIds, archivedSessionIds: state.archivedSessionIds })
+    await this.setState({
+      initialized: true,
+      workspaceIds,
+      archivedSessionIds: state.archivedSessionIds,
+      trashedSessions: state.trashedSessions,
+    })
   }
 
   private validateStoredState(state: WorkspaceDomainState): void {

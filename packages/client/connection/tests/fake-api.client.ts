@@ -149,7 +149,7 @@ export class FakeApiClient implements IApiClient {
   }
 
   readonly workspace: IApiClient['workspace'] = {
-    list: (payload: unknown) => this.record('workspace.list', payload, Promise.resolve(ok({ items: [], archivedSessionIds: [] }))),
+    list: (payload: unknown) => this.record('workspace.list', payload, Promise.resolve(ok({ items: [], archivedSessionIds: [], trashedSessions: [] }))),
     create: (payload: unknown) => this.record('workspace.create', payload, Promise.resolve(ok({
       workspace: { workspaceId: 'fk-ws' as never, path: '/f/ws', title: 'ws', sessionIds: [], createdAt: '0', updatedAt: '0' },
       created: true,
@@ -166,6 +166,15 @@ export class FakeApiClient implements IApiClient {
     }))),
     archiveSession: (payload: unknown) => this.record('workspace.archiveSession', payload, Promise.resolve(ok({
       archivedSessionIds: [(payload as { sessionId: SessionId }).sessionId],
+    }))),
+    trashSession: (payload: unknown) => this.record('workspace.trashSession', payload, Promise.resolve(ok({
+      trashedSessions: [{ sessionId: (payload as { sessionId: SessionId }).sessionId, deletedAt: 0 }],
+    }))),
+    restoreSession: (payload: unknown) => this.record('workspace.restoreSession', payload, Promise.resolve(ok({
+      trashedSessions: [],
+    }))),
+    deleteTrashedSession: (payload: unknown) => this.record('workspace.deleteTrashedSession', payload, Promise.resolve(ok({
+      trashedSessions: [],
     }))),
   }
 

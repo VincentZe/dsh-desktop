@@ -95,6 +95,9 @@ export function apply(ctx: ClientContext): void {
       await ctx.workspaces.insertBefore(workspaceId, beforeWorkspaceId)
     },
     archiveSession: async (sessionId) => { await ctx.workspaces.archiveSession(sessionId) },
+    trashSession: async (sessionId) => { await ctx.workspaces.trashSession(sessionId) },
+    restoreSession: async (sessionId) => { await ctx.workspaces.restoreSession(sessionId) },
+    deleteTrashedSession: async (sessionId) => { await ctx.workspaces.deleteTrashedSession(sessionId) },
     insertSessionBefore: async (workspaceId, sessionId, beforeSessionId) => {
       await ctx.workspaces.insertSessionBefore(workspaceId, sessionId, beforeSessionId)
     },

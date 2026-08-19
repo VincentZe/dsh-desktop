@@ -19,6 +19,7 @@ import UserQuestionService from '@deepseek-ai/dsh-user-questions'
 import type { SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
 import {
   PersistenceCoordinator,
+  SessionPersistenceCorruptionError,
   SessionPersistenceRevision,
   type PersistenceBackend,
   type StoredPrefix,
@@ -39,6 +40,29 @@ function header(id: string, createdAt: number, extra: Partial<SessionHeader> = {
 }
 
 describe('sessions.list cold merge', () => {
+  it('passes the persistence header batch to the workspace registry cache', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    await ctx.plugin(UserQuestionService)
+    const metas = [header('cached-for-trash', 100)]
+    const cacheSessionHeaders = vi.fn(async () => {})
+    ctx.provide('sessionPersistence', {
+      list: () => Promise.resolve(metas),
+      locate: () => undefined,
+    } as never)
+    ctx.provide('workspaceRegistry', { cacheSessionHeaders } as never)
+    const api = createApiProxy(ctx, {
+      defaultModelSelection: () => ({ provider: 'p', model: 'm' }),
+      cwd: '/tmp',
+      coldBlankProbeMaxBytes: 0,
+    })
+
+    const response = await api.sessions.list(request({}))
+
+    expect(response.result.ok).toBe(true)
+    expect(cacheSessionHeaders).toHaveBeenCalledWith(metas)
+  })
+
   it('verifies only small possibly-blank artifacts and treats every unavailable probe as visible', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
@@ -321,6 +345,36 @@ describe('cold history recovery view', () => {
     `)
     expect(ctx.sessions.get(sessionId)).toBeUndefined()
     await ctx.fiber.dispose()
+  })
+})
+
+describe('corrupt cold history cleanup', () => {
+  it('moves a corrupt cold session into the recycle bin and serves an empty page', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    await ctx.plugin(UserQuestionService)
+    const sessionId = sid('session-corrupt')
+    const meta = header(sessionId, 1000)
+    const inspect = vi.fn(async () => {
+      throw new SessionPersistenceCorruptionError(
+        `stored session "${sessionId}" failed validation`,
+        { cause: new Error('invalid event payload') },
+      )
+    })
+    const trashSession = vi.fn(async () => {})
+    ctx.provide('sessionPersistence', {
+      list: () => Promise.resolve([meta]),
+      inspect,
+      locate: () => ({ kind: 'jsonl', path: '/corrupt/session.jsonl' }),
+    } as never)
+    ctx.provide('workspaceRegistry', { trashSession } as never)
+    const api = createApiProxy(ctx, { defaultModelSelection: () => ({ provider: 'p', model: 'm' }), cwd: '/tmp' })
+
+    const history = await api.sessions.history(request({ sessionId }))
+
+    expect(history.result).toEqual({ ok: true, value: { events: [], hasMore: false } })
+    expect(trashSession).toHaveBeenCalledWith(sessionId)
+    expect(inspect).toHaveBeenCalledOnce()
   })
 })
 

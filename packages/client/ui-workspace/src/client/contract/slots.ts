@@ -127,6 +127,12 @@ export type WorkspaceBrowserInjected = DirectoryPickingInjected & {
    * session clears the selection into the New Session view state.
    */
   archiveSession: (sessionId: SessionId) => Promise<void>
+  /** Move a Session into the durable recycle bin. */
+  trashSession: (sessionId: SessionId) => Promise<void>
+  /** Restore a Session from the durable recycle bin. */
+  restoreSession: (sessionId: SessionId) => Promise<void>
+  /** Permanently delete a Session already in the recycle bin. */
+  deleteTrashedSession: (sessionId: SessionId) => Promise<void>
   /**
    * Reorder a session inside its Workspace account (DOM-insertBefore
    * semantics: omitted anchor appends to the end). The view refreshes from

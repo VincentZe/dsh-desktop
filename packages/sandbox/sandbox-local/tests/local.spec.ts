@@ -19,6 +19,7 @@ import {
   LocalSandboxProvider,
 } from '@deepseek-ai/dsh-sandbox-local'
 import type { Config } from '@deepseek-ai/dsh-sandbox-local'
+import { WINDOWS_ACL_RUNNER_ARG } from '@deepseek-ai/dsh-sandbox-windows-acl'
 import { bwrapProfileArgs, landlockProfileArgs, seatbeltProfileArgs } from '../src/profiles.ts'
 
 const RO: SandboxPolicy = { mode: 'read-only', workspaceRoot: '/ws' }
@@ -377,6 +378,34 @@ describe('the default seatbelt probe (sandbox-exec contract)', () => {
 })
 
 describe('the windows-acl probe (runner invocation contract)', () => {
+  it('uses the fixed Web dispatch marker instead of passing runner.js to the SEA executable', async () => {
+    const entry = join(mkdtempSync(join(tmpdir(), 'dsh-fixed-web-entry-')), 'web-bundle.js')
+    writeFileSync(entry, '')
+    const originalArgv1 = process.argv[1]
+    const originalFixedRuntime = process.env.DSH_FIXED_WEB_RUNTIME
+    try {
+      process.argv[1] = entry
+      process.env.DSH_FIXED_WEB_RUNTIME = '1'
+      const { sandbox } = await setup({}, {
+        chain: ['windows-acl'],
+        probeWindowsAcl: () => true,
+      })
+      expect(sandbox.confine(['true'], RO).argv.slice(0, 3)).toEqual([
+        process.execPath, entry, WINDOWS_ACL_RUNNER_ARG,
+      ])
+
+      process.argv[1] = WINDOWS_ACL_RUNNER_ARG
+      expect(sandbox.confine(['true'], RO).argv.slice(0, 3)).toEqual([
+        process.execPath, WINDOWS_ACL_RUNNER_ARG, '--workspace',
+      ])
+    } finally {
+      if (originalArgv1 === undefined) delete process.argv[1]
+      else process.argv[1] = originalArgv1
+      if (originalFixedRuntime === undefined) delete process.env.DSH_FIXED_WEB_RUNTIME
+      else process.env.DSH_FIXED_WEB_RUNTIME = originalFixedRuntime
+    }
+  })
+
   // The product chain reaches windows-acl only unprobed (win32's sole
   // candidate), so the probe case and the runner-entry resolution are pinned
   // through the chain seam, mirroring the seatbelt default-probe contract.

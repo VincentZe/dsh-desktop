@@ -11,6 +11,7 @@ import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionHeader } from '@deepseek-ai/dsh-session'
 import { MemoryMediaPool, MemoryStorageBackend } from '../../../storage/storage-domain/tests/helpers/memory-backend.ts'
 import WorkspaceRegistry, {
+  TRASH_RETENTION_MS,
   WorkspaceId,
   WorkspaceMoveInvalidError,
   WorkspaceOrderInvalidError,
@@ -48,7 +49,8 @@ async function harness(options: HarnessOptions = {}) {
   const list = vi.fn(async () => listed)
   const load = vi.fn(() => { throw new Error('event bodies must not be loaded') })
   const inspect = vi.fn(() => { throw new Error('event bodies must not be inspected') })
-  ctx.provide('sessionPersistence', { list, load, inspect } as never)
+  const remove = vi.fn(async () => true)
+  ctx.provide('sessionPersistence', { list, load, inspect, remove } as never)
 
   if (options.sessionStore === true) {
     await ctx.plugin(SessionStore)
@@ -62,6 +64,8 @@ async function harness(options: HarnessOptions = {}) {
 
   const changes: DomainChanged[] = []
   ctx.on('domain/changed', (change) => { changes.push(change) })
+  const deleted: SessionId[] = []
+  ctx.on('workspace/session-deleted', (sessionId) => { deleted.push(sessionId) })
   const fiber = await ctx.plugin(WorkspaceRegistry)
   const initChanges = [...changes]
   changes.length = 0
@@ -71,10 +75,12 @@ async function harness(options: HarnessOptions = {}) {
     pool,
     registry: ctx.workspaceRegistry,
     changes,
+    deleted,
     initChanges,
     list,
     load,
     inspect,
+    remove,
     setSessions: (headers: SessionHeader[]) => { listed = headers },
   }
 }
@@ -143,8 +149,8 @@ function record(path: string, sessionIds: string[], createdAt = '2026-07-24T00:0
  * Media written before archivedSessionIds existed omit the field; keeping the
  * fixtures in that shape continuously proves the schema default upgrades them.
  */
-type StoredDomainState = Omit<WorkspaceDomainState, 'archivedSessionIds'>
-  & Partial<Pick<WorkspaceDomainState, 'archivedSessionIds'>>
+type StoredDomainState = Omit<WorkspaceDomainState, 'archivedSessionIds' | 'trashedSessions'>
+  & Partial<Pick<WorkspaceDomainState, 'archivedSessionIds' | 'trashedSessions'>>
 
 function storedPool(
   entries: Array<[string, WorkspaceRecord]>,
@@ -196,7 +202,7 @@ describe('WorkspaceRegistry lifecycle and bootstrap', () => {
     await fiber.await()
     expect(ctx.workspaceRegistry.list()).toEqual([])
     expect(list).toHaveBeenCalledTimes(1)
-    expect(storedState(pool)).toEqual({ initialized: true, workspaceIds: [], archivedSessionIds: [] })
+    expect(storedState(pool)).toEqual({ initialized: true, workspaceIds: [], archivedSessionIds: [], trashedSessions: [] })
   })
 
   it('bootstraps once from list headers only, in workspace/session createdAt order', async () => {
@@ -230,6 +236,7 @@ describe('WorkspaceRegistry lifecycle and bootstrap', () => {
       initialized: true,
       workspaceIds: result.registry.list().map(workspace => workspace.id),
       archivedSessionIds: [],
+      trashedSessions: [],
     })
   })
 
@@ -258,7 +265,7 @@ describe('WorkspaceRegistry lifecycle and bootstrap', () => {
     const second = await harness({ pool, sessions: [header('late', late, 100)] })
     expect(second.list).not.toHaveBeenCalled()
     expect(second.registry.list()).toEqual([])
-    expect(storedState(pool)).toEqual({ initialized: true, workspaceIds: [], archivedSessionIds: [] })
+    expect(storedState(pool)).toEqual({ initialized: true, workspaceIds: [], archivedSessionIds: [], trashedSessions: [] })
   })
 
   it('reuses partial records after a bootstrap record write fails', async () => {
@@ -486,7 +493,7 @@ describe('WorkspaceRegistry create and lookup', () => {
     await expect(result.registry.delete(workspace.id)).resolves.toBe(false)
     expect(result.registry.get(workspace.id)).toBeUndefined()
     expect(result.registry.list()).toEqual([])
-    expect(storedState(result.pool)).toEqual({ initialized: true, workspaceIds: [], archivedSessionIds: [] })
+    expect(storedState(result.pool)).toEqual({ initialized: true, workspaceIds: [], archivedSessionIds: [], trashedSessions: [] })
     expect(result.pool.media.get('workspace')!.tables.get('workspaces')!.has(workspace.id)).toBe(false)
     await expect(realpath(dir)).resolves.toBe(dir)
     expect(result.list).toHaveBeenCalledTimes(1)
@@ -530,6 +537,7 @@ describe('WorkspaceRegistry create and lookup', () => {
       initialized: true,
       workspaceIds: [],
       archivedSessionIds: [],
+      trashedSessions: [],
       pendingMutation: { operation: 'delete', workspaceId: workspace.id },
     })
     const reregistered = await first.registry.create(dir)
@@ -538,6 +546,7 @@ describe('WorkspaceRegistry create and lookup', () => {
       initialized: true,
       workspaceIds: [reregistered.id],
       archivedSessionIds: [],
+      trashedSessions: [],
     })
     await first.fiber.dispose()
 
@@ -817,7 +826,7 @@ describe('header-validated membership projection', () => {
     const createRecovery = await harness({ pool: interruptedCreate })
     expect(createRecovery.registry.list()).toEqual([])
     expect(interruptedCreate.media.get('workspace')!.tables.get('workspaces')!.has(createId)).toBe(false)
-    expect(storedState(interruptedCreate)).toEqual({ initialized: true, workspaceIds: [], archivedSessionIds: [] })
+    expect(storedState(interruptedCreate)).toEqual({ initialized: true, workspaceIds: [], archivedSessionIds: [], trashedSessions: [] })
 
     const interruptedDelete = storedPool(
       [[deleteId, record(deleteDir, [])]],
@@ -830,7 +839,7 @@ describe('header-validated membership projection', () => {
     const deleteRecovery = await harness({ pool: interruptedDelete })
     expect(deleteRecovery.registry.list()).toEqual([])
     expect(interruptedDelete.media.get('workspace')!.tables.get('workspaces')!.has(deleteId)).toBe(false)
-    expect(storedState(interruptedDelete)).toEqual({ initialized: true, workspaceIds: [], archivedSessionIds: [] })
+    expect(storedState(interruptedDelete)).toEqual({ initialized: true, workspaceIds: [], archivedSessionIds: [], trashedSessions: [] })
 
     const corruptPending = storedPool(
       [[deleteId, record(deleteDir, [])]],
@@ -940,5 +949,81 @@ describe('registry-global session archive', () => {
     )
     const upgraded = await harness({ pool: legacy })
     expect(upgraded.registry.archivedSessionIds).toEqual([])
+  })
+})
+
+describe('registry-global session recycle bin', () => {
+  it('uses headers cached by the host list before trashing a cold session', async () => {
+    const dir = await makeDir('trash-header-cache')
+    const pool = storedPool([], {
+      initialized: true,
+      workspaceIds: [],
+      archivedSessionIds: [],
+      trashedSessions: [],
+    })
+    const result = await harness({ pool, sessions: [] })
+
+    await result.registry.cacheSessionHeaders([header('cold', dir, 100)])
+    await result.registry.trashSession(SessionId('cold'))
+
+    expect(result.list).not.toHaveBeenCalled()
+    expect(result.registry.trashedSessions).toEqual([
+      expect.objectContaining({ sessionId: SessionId('cold') }),
+    ])
+  })
+
+  it('trashes and restores a session without changing workspace accounting', async () => {
+    const dir = await makeDir('trash-home')
+    const result = await harness({ sessions: [header('gone', dir, 100)] })
+    const workspace = result.registry.list()[0]!
+    const before = Date.now()
+
+    await result.registry.trashSession(SessionId('gone'))
+    const trashed = result.registry.trashedSessions
+    expect(trashed).toHaveLength(1)
+    expect(trashed[0]).toMatchObject({ sessionId: 'gone' })
+    expect(trashed[0]!.deletedAt).toBeGreaterThanOrEqual(before)
+    expect(workspace.sessionIds).toContain('gone')
+
+    await result.registry.restoreSession(SessionId('gone'))
+    expect(result.registry.trashedSessions).toEqual([])
+    expect(result.remove).not.toHaveBeenCalled()
+  })
+
+  it('permanently removes a cold trashed session and is idempotent after removal', async () => {
+    const dir = await makeDir('trash-delete-home')
+    const result = await harness({ sessions: [header('gone', dir, 100)] })
+    await result.registry.trashSession(SessionId('gone'))
+
+    await result.registry.deleteTrashedSession(SessionId('gone'))
+    expect(result.remove).toHaveBeenCalledWith(SessionId('gone'))
+    expect(result.registry.trashedSessions).toEqual([])
+    const removeCalls = result.remove.mock.calls.length
+    await result.registry.deleteTrashedSession(SessionId('gone'))
+    expect(result.remove).toHaveBeenCalledTimes(removeCalls)
+  })
+
+  it('purges expired cold sessions on startup but retains expired live sessions', async () => {
+    const coldDir = await makeDir('trash-expired-cold')
+    const expired = Date.now() - TRASH_RETENTION_MS
+    const coldPool = storedPool([], {
+      initialized: true,
+      workspaceIds: [],
+      trashedSessions: [{ sessionId: SessionId('cold'), deletedAt: expired }],
+    })
+    const cold = await harness({ pool: coldPool, sessions: [header('cold', coldDir, 100)] })
+    expect(cold.remove).toHaveBeenCalledWith(SessionId('cold'))
+    expect(cold.deleted).toEqual([SessionId('cold')])
+    expect(cold.registry.trashedSessions).toEqual([])
+
+    const liveDir = await makeDir('trash-expired-live')
+    const livePool = storedPool([], {
+      initialized: true,
+      workspaceIds: [],
+      trashedSessions: [{ sessionId: SessionId('live'), deletedAt: expired }],
+    })
+    const live = await harness({ pool: livePool, liveSessions: [header('live', liveDir, 100)] })
+    expect(live.remove).not.toHaveBeenCalled()
+    expect(live.registry.trashedSessions).toEqual([{ sessionId: 'live', deletedAt: expired }])
   })
 })

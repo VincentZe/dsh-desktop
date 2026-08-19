@@ -39,6 +39,7 @@ import {
   workspaceInsertSessionBeforeValueSchema,
   workspaceListValueSchema,
   workspaceRenameValueSchema,
+  workspaceTrashSessionValueSchema,
 } from '../api/workspace.schema.ts'
 import { skillListValueSchema } from '../api/skills.schema.ts'
 import {
@@ -120,6 +121,9 @@ export interface IApiClient {
     insertBefore(payload: RequestPayload<'workspace.insertBefore'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'workspace.insertBefore'>>>
     insertSessionBefore(payload: RequestPayload<'workspace.insertSessionBefore'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'workspace.insertSessionBefore'>>>
     archiveSession(payload: RequestPayload<'workspace.archiveSession'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'workspace.archiveSession'>>>
+    trashSession(payload: RequestPayload<'workspace.trashSession'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'workspace.trashSession'>>>
+    restoreSession(payload: RequestPayload<'workspace.restoreSession'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'workspace.restoreSession'>>>
+    deleteTrashedSession(payload: RequestPayload<'workspace.deleteTrashedSession'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'workspace.deleteTrashedSession'>>>
   }
   skills: {
     list(payload: RequestPayload<'skill.list'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'skill.list'>>>
@@ -198,6 +202,9 @@ const UNARY_VALUE_SCHEMAS: { [K in keyof RpcMethodMap]: z.ZodType<Wire<ResponseV
   'workspace.insertBefore': workspaceInsertBeforeValueSchema,
   'workspace.insertSessionBefore': workspaceInsertSessionBeforeValueSchema,
   'workspace.archiveSession': workspaceArchiveSessionValueSchema,
+  'workspace.trashSession': workspaceTrashSessionValueSchema,
+  'workspace.restoreSession': workspaceTrashSessionValueSchema,
+  'workspace.deleteTrashedSession': workspaceTrashSessionValueSchema,
   'skill.list': skillListValueSchema,
   'agentPreset.list': agentPresetListValueSchema,
   'agentPreset.select': agentPresetSelectValueSchema,
@@ -451,6 +458,9 @@ export abstract class AbstractApiClient implements IApiClient {
     insertBefore: (payload, signal) => this.callUnary('workspace.insertBefore', payload, signal),
     insertSessionBefore: (payload, signal) => this.callUnary('workspace.insertSessionBefore', payload, signal),
     archiveSession: (payload, signal) => this.callUnary('workspace.archiveSession', payload, signal),
+    trashSession: (payload, signal) => this.callUnary('workspace.trashSession', payload, signal),
+    restoreSession: (payload, signal) => this.callUnary('workspace.restoreSession', payload, signal),
+    deleteTrashedSession: (payload, signal) => this.callUnary('workspace.deleteTrashedSession', payload, signal),
   }
 
   readonly skills: IApiClient['skills'] = {

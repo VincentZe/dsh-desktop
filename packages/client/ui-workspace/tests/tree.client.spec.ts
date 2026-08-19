@@ -4,7 +4,7 @@ import type {
 } from '@deepseek-ai/dsh-client-runtime/client'
 import {
   deriveFlat, deriveGroups, deriveSearchResults, workspaceLabel, relativeTime,
-  UNGROUPED_KEY, UNGROUPED_LABEL,
+  TRASH_KEY, UNGROUPED_KEY, UNGROUPED_LABEL,
 } from '../src/client/tree.ts'
 import { createWorkspaceViewStore } from '../src/client/stores.ts'
 
@@ -36,7 +36,7 @@ describe('deriveGroups', () => {
     const sessions = list(summary('newer', 20), summary('older', 10))
     const workspaces = [workspace('first', ['older', 'newer']), workspace('empty', [])]
     const groups = deriveGroups(sessions, workspaces, noArchive, view(['first']))
-    expect(groups.map(group => group.key)).toEqual(['first', 'empty'])
+    expect(groups.map(group => group.key)).toEqual(['first', 'empty', TRASH_KEY])
     expect(groups[0]!.sessions.map(session => session.id)).toEqual([sid('older'), sid('newer')])
   })
 
@@ -51,7 +51,7 @@ describe('deriveGroups', () => {
   it('puts only real unaccounted Sessions in the trailing Ungrouped group', () => {
     const sessions = list(summary('owned', 1, '/projects/first'), summary('loose', 9, '/other'))
     const groups = deriveGroups(sessions, [workspace('first', ['owned'])], noArchive, view([UNGROUPED_KEY]))
-    expect(groups.map(group => group.key)).toEqual(['first', UNGROUPED_KEY])
+    expect(groups.map(group => group.key)).toEqual(['first', UNGROUPED_KEY, TRASH_KEY])
     expect(groups[1]!.sessions.map(session => session.id)).toEqual([sid('loose')])
   })
 
@@ -89,7 +89,7 @@ describe('deriveGroups', () => {
     expect(groups[0]!.sessionCount).toBe(2)
     // A non-current blank stray never surfaces an Ungrouped bucket either.
     const strayGroups = deriveGroups(list({ ...summary('stray', 2), blank: true }), [workspace('first', [])], noArchive, view())
-    expect(strayGroups.map(group => group.key)).toEqual(['first'])
+    expect(strayGroups.map(group => group.key)).toEqual(['first', TRASH_KEY])
   })
 
   it('projects the completion reminder into session and search rows (absent = false)', () => {
@@ -158,7 +158,7 @@ describe('deriveGroups', () => {
       { expandedGroups: [UNGROUPED_KEY] },
     )
 
-    expect(groups).toHaveLength(1)
+    expect(groups).toHaveLength(2)
     expect(groups[0]!.sessions.map(node => node.id)).toEqual([
       newChild.id, tieA.id, tieB.id, oldChild.id,
       cycleB.id, cycleA.id, orphan.id, self.id, parent.id,
@@ -189,9 +189,43 @@ describe('deriveGroups', () => {
     )
     // The archived member drops from its group AND the archived stray never
     // surfaces an Ungrouped bucket; counts follow the visible rows.
-    expect(groups.map(group => group.key)).toEqual(['first'])
+    expect(groups.map(group => group.key)).toEqual(['first', TRASH_KEY])
     expect(groups[0]!.sessions.map(node => node.id)).toEqual([kept.id])
     expect(groups[0]!.sessionCount).toBe(1)
+  })
+
+  it('moves trashed sessions into a dedicated group and excludes them from flat/search views', () => {
+    const kept = summary('kept', 1)
+    const gone = summary('gone', 2)
+    const sessions = list(kept, gone)
+    const groups = deriveGroups(
+      sessions,
+      [workspace('first', ['kept', 'gone'])],
+      noArchive,
+      view([TRASH_KEY, 'first']),
+      [gone.id],
+    )
+    expect(groups.map(group => group.key)).toEqual(['first', TRASH_KEY])
+    expect(groups[0]!.sessions.map(node => node.id)).toEqual([kept.id])
+    expect(groups[1]).toMatchObject({ isTrash: true, sessionCount: 1 })
+    expect(groups[1]!.sessions.map(node => node.id)).toEqual([gone.id])
+    expect(deriveFlat(sessions, noArchive, [gone.id]).map(node => node.id)).toEqual([kept.id])
+    expect(deriveSearchResults(
+      sessions, [], 'gone', noArchive, { items: [{ sessionId: gone.id, snippet: 'gone' }], hasMore: false }, 10,
+      [gone.id],
+    ).items).toEqual([])
+  })
+
+  it('keeps an empty recycle-bin group discoverable while sessions exist', () => {
+    const groups = deriveGroups(
+      list(summary('kept', 1)),
+      [workspace('first', ['kept'])],
+      noArchive,
+      view(),
+    )
+
+    expect(groups.map(group => group.key)).toEqual(['first', TRASH_KEY])
+    expect(groups[1]).toMatchObject({ isTrash: true, sessionCount: 0, sessions: [] })
   })
 
   it('marks selected Workspace and Ungrouped sessions without relying on an Intent', () => {

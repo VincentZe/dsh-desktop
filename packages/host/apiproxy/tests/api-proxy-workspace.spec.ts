@@ -64,6 +64,10 @@ async function harness(
   extras: {
     openPath?: (path: string, signal: AbortSignal) => Promise<void>
     canOpenPath?: () => boolean
+    sessionPersistence?: {
+      list: () => Promise<readonly { id: SessionId; cwd?: string; createdAt: number }[]>
+      remove: (id: SessionId) => Promise<boolean>
+    }
   } = {},
 ) {
   const ctx = new Context()
@@ -75,7 +79,10 @@ async function harness(
   const storageDomain = new DomainFacility(ctx, { backend: 'memory', routes: {} })
   ctx.storage.mount('domain', storageDomain)
   ctx.provide('storageDomain', storageDomain)
-  ctx.provide('sessionPersistence', { list: () => Promise.resolve([]) } as never)
+  ctx.provide('sessionPersistence', extras.sessionPersistence ?? {
+    list: () => Promise.resolve([]),
+    remove: async () => false,
+  } as never)
   await ctx.plugin(WorkspaceRegistry)
 
   const factory: AgentFactory = {
@@ -565,6 +572,40 @@ describe('Host Workspace increments', () => {
       ok: false,
       error: { code: 'session-not-found', details: { sessionId: 'session-ghost' } },
     })
+    abort.abort()
+  })
+
+  it('permanently deletes a cold trashed session and broadcasts its list removal', async () => {
+    const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'dsh-apiproxy-trash-')))
+    const cold = SessionId('cold-trashed-session')
+    const remove = vi.fn(async () => true)
+    const { api } = await harness(root, undefined, {
+      sessionPersistence: {
+        list: async () => [{ id: cold, cwd: root, createdAt: 100 }],
+        remove,
+      },
+    })
+    const workspace = expectOk(await api.workspace.create(request({ path: root }))).workspace
+    expect(workspace.sessionIds).toEqual([cold])
+
+    const abort = new AbortController()
+    const stream: AsyncIterator<RpcRequest<HostFrame>> =
+      api.events.host(request({}), abort.signal)[Symbol.asyncIterator]()
+    const trashedFrame = nextHostFrame(stream)
+    expect(expectOk(await api.workspace.trashSession(request({ sessionId: cold }))).trashedSessions)
+      .toMatchObject([{ sessionId: cold }])
+    expect(await trashedFrame).toMatchObject({
+      payload: { type: 'host/trashed-sessions-changed', trashedSessions: [{ sessionId: cold }] },
+    })
+
+    const trashedClearedFrame = nextHostFrame(stream)
+    const removedFrame = nextHostFrame(stream)
+    expectOk(await api.workspace.deleteTrashedSession(request({ sessionId: cold })))
+    expect(remove).toHaveBeenCalledWith(cold)
+    expect(await trashedClearedFrame).toMatchObject({
+      payload: { type: 'host/trashed-sessions-changed', trashedSessions: [] },
+    })
+    expect(await removedFrame).toMatchObject({ payload: { type: 'host/session-removed', sessionId: cold } })
     abort.abort()
   })
 })

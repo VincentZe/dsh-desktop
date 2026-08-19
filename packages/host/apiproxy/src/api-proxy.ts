@@ -17,6 +17,7 @@ import { errorChain } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, MessageSource } from '@deepseek-ai/dsh-llm'
 import { isAppendSurfaceEvent, isJsonValue } from '@deepseek-ai/dsh-session'
 import type { JsonValue, Session, SessionEvent, SessionEventMap, SessionHeader, SessionId, UserMessage } from '@deepseek-ai/dsh-session'
+import { SessionPersistenceCorruptionError } from '@deepseek-ai/dsh-session-persistence'
 import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
 import { SessionQueryError, type SessionSearchCursor } from '@deepseek-ai/dsh-session-query'
 import { SubagentError } from '@deepseek-ai/dsh-subagent'
@@ -25,7 +26,8 @@ import { isUserInvocable } from '@deepseek-ai/dsh-skill'
 import type { Workspace, WorkspaceRecord } from '@deepseek-ai/dsh-workspace'
 import {
   workspaceDomainState, workspaceRecord, WorkspaceId as brandWorkspaceId,
-  WorkspaceMoveInvalidError, WorkspaceOrderInvalidError, WorkspaceUnknownSessionError,
+  WorkspaceMoveInvalidError, WorkspaceOrderInvalidError, WorkspaceTrashUnknownSessionError,
+  WorkspaceUnknownSessionError,
 } from '@deepseek-ai/dsh-workspace'
 // Type-only: brings the `ctx.tools` Context merge into this program (viewFor reads presenters).
 import {
@@ -1791,7 +1793,10 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
     const attached = new Set(items.map(item => item.sessionId))
     const persistence = ctx.get('sessionPersistence')
     if (persistence !== undefined) {
-      const cold = (await persistence.list(signal))
+      const persisted = await persistence.list(signal)
+      const workspaceRegistry = ctx.get('workspaceRegistry')
+      if (workspaceRegistry !== undefined) await workspaceRegistry.cacheSessionHeaders(persisted)
+      const cold = persisted
         .filter(meta => !attached.has(meta.id) && meta.cwd !== undefined)
       signal?.throwIfAborted()
       for (let offset = 0; offset < cold.length; offset += COLD_SUMMARY_BATCH_SIZE) {
@@ -2312,6 +2317,18 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             ...cut.projections === undefined ? {} : { projections: cut.projections },
           })
         } catch (error: unknown) {
+          if (error instanceof SessionPersistenceCorruptionError) {
+            const workspaceRegistry = ctx.get('workspaceRegistry')
+            if (workspaceRegistry !== undefined) {
+              try {
+                await workspaceRegistry.trashSession(sessionId)
+                ctx.logger.warn(`session.history: corrupt session "${sessionId}" moved to the recycle bin: ${error.message}`)
+                return ok(request, { events: [], hasMore: false })
+              } catch (cleanupError: unknown) {
+                ctx.logger.warn(`session.history: failed to move corrupt session "${sessionId}" to the recycle bin: ${String(cleanupError)}`)
+              }
+            }
+          }
           if (error instanceof SessionNotFound) {
             return err(request, { code: 'session-not-found', message: error.message, details: { sessionId } })
           }
@@ -2858,6 +2875,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         return Promise.resolve(ok(request, {
           items: ctx.workspaceRegistry.list().map(workspaceView),
           archivedSessionIds: [...ctx.workspaceRegistry.archivedSessionIds],
+          trashedSessions: [...ctx.workspaceRegistry.trashedSessions],
         }))
       },
 
@@ -2971,6 +2989,42 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           })
         }
         return ok(request, { archivedSessionIds: [...ctx.workspaceRegistry.archivedSessionIds] })
+      },
+
+      async trashSession(request) {
+        const { sessionId } = request.payload
+        try {
+          await ctx.workspaceRegistry.trashSession(sessionId)
+        } catch (error: unknown) {
+          if (!(error instanceof WorkspaceTrashUnknownSessionError)) throw error
+          return err(request, {
+            code: 'session-not-found',
+            message: error.message,
+            details: { sessionId },
+          })
+        }
+        return ok(request, { trashedSessions: [...ctx.workspaceRegistry.trashedSessions] })
+      },
+
+      async restoreSession(request) {
+        await ctx.workspaceRegistry.restoreSession(request.payload.sessionId)
+        return ok(request, { trashedSessions: [...ctx.workspaceRegistry.trashedSessions] })
+      },
+
+      async deleteTrashedSession(request) {
+        const { sessionId } = request.payload
+        try {
+          await ctx.workspaceRegistry.deleteTrashedSession(sessionId)
+        } catch (error: unknown) {
+          return err(request, {
+            code: 'session-delete-failed',
+            message: error instanceof Error ? error.message : String(error),
+            details: { sessionId },
+          })
+        }
+        // The registry emits the invalidation after both storage and its
+        // recycle-bin record commit, including automatic seven-day cleanup.
+        return ok(request, { trashedSessions: [...ctx.workspaceRegistry.trashedSessions] })
       },
     },
 
@@ -3603,6 +3657,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         // stream opens against the current set; workspace.list re-baselines
         // reconnecting clients, so only later changes need frames.
         let archivedSessionIds = ctx.workspaceRegistry.archivedSessionIds
+        let trashedSessions = ctx.workspaceRegistry.trashedSessions
         const disposers = [
           ctx.on('session/created', (session: Session) => {
             queue.push(frame({
@@ -3623,6 +3678,9 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           }),
           ctx.on('agent/error', ({ agent, error }: { agent: Agent; error: unknown }) => {
             queue.push(frame({ type: 'host/agent-error', sessionId: agent.id, message: errorChain(error) }))
+          }),
+          ctx.on('workspace/session-deleted', (sessionId: SessionId) => {
+            queue.push(frame({ type: 'host/session-removed', sessionId }))
           }),
           ctx.on('domain/changed', (change) => {
             if (change.domain !== 'workspace') return
@@ -3654,6 +3712,19 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
                 queue.push(frame({
                   type: 'host/archived-sessions-changed',
                   archivedSessionIds: [...state.archivedSessionIds],
+                }))
+              }
+              if (state.trashedSessions.length !== trashedSessions.length
+                || state.trashedSessions.some((item, index) => {
+                  const previous = trashedSessions[index]
+                  return previous === undefined
+                    || item.sessionId !== previous.sessionId
+                    || item.deletedAt !== previous.deletedAt
+                })) {
+                trashedSessions = state.trashedSessions
+                queue.push(frame({
+                  type: 'host/trashed-sessions-changed',
+                  trashedSessions: [...state.trashedSessions],
                 }))
               }
               return

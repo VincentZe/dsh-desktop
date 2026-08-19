@@ -3,7 +3,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {
   DirectoryListing, IApiClient, RpcError,
-  SessionId, WorkspaceId, WorkspaceView,
+  SessionId, TrashedSession, WorkspaceId, WorkspaceView,
 } from '@deepseek-ai/dsh-api-remotes/client'
 import type { SnapshotStore } from '../contract/store.ts'
 import { createSnapshotStore } from '../contract/store.ts'
@@ -22,6 +22,8 @@ export interface WorkspaceListState {
    * build their own transient Set.
    */
   archivedSessionIds: readonly SessionId[]
+  /** Durable recycle-bin rows, retained until restored or physically deleted. */
+  trashedSessions?: readonly TrashedSession[]
   state: 'idle' | 'loading' | 'error'
   phase: WorkspaceListPhase
   error: RpcError | null
@@ -66,7 +68,7 @@ export class WorkspaceRuntime implements IWorkspaces {
   constructor(ctx: Context, private readonly api: IApiClient, private readonly sessions: SessionsPort) {
     this.manager = new WorkspaceManager(api)
     this.list = createSnapshotStore<WorkspaceListState>({
-      items: [], archivedSessionIds: [], state: 'idle', phase: 'pending', error: null,
+      items: [], archivedSessionIds: [], trashedSessions: [], state: 'idle', phase: 'pending', error: null,
       baselinesReady: false, recentWorkspaceId: undefined,
     })
     this.manager.subscribe(() => { this.project() })
@@ -292,6 +294,24 @@ export class WorkspaceRuntime implements IWorkspaces {
     if (!result.ok) throw new Error(`session archive failed: ${result.error.code}: ${result.error.message}`)
   }
 
+  /** Move a session into the recycle bin and clear it when currently selected. */
+  async trashSession(sessionId: SessionId): Promise<void> {
+    const result = await this.manager.trashSession(sessionId)
+    if (!result.ok) throw new Error(`session trash failed: ${result.error.code}: ${result.error.message}`)
+  }
+
+  /** Restore a session from the recycle bin. */
+  async restoreSession(sessionId: SessionId): Promise<void> {
+    const result = await this.manager.restoreSession(sessionId)
+    if (!result.ok) throw new Error(`session restore failed: ${result.error.code}: ${result.error.message}`)
+  }
+
+  /** Permanently remove a session from the recycle bin. */
+  async deleteTrashedSession(sessionId: SessionId): Promise<void> {
+    const result = await this.manager.deleteTrashedSession(sessionId)
+    if (!result.ok) throw new Error(`session delete failed: ${result.error.code}: ${result.error.message}`)
+  }
+
   /**
    * Move a session within its Workspace's manual order (DOM-insertBefore-like).
    * @param workspaceId - owning workspace.
@@ -342,9 +362,13 @@ export class WorkspaceRuntime implements IWorkspaces {
     if (sessions.current !== undefined && workspace.archivedSessionIds.includes(sessions.current)) {
       this.sessions.clear()
     }
+    if (sessions.current !== undefined && workspace.trashedSessions.some(item => item.sessionId === sessions.current)) {
+      this.sessions.clear()
+    }
     this.list.set({
       items: workspace.items,
       archivedSessionIds: workspace.archivedSessionIds,
+      trashedSessions: workspace.trashedSessions,
       state: workspace.state,
       phase: workspace.phase,
       error: workspace.error,

@@ -1563,6 +1563,7 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
   // Registry-global archive set mirroring the host: archived sessions keep
   // their workspace accounting slot and only grouping surfaces hide them.
   const archivedSessionIds: SessionId[] = []
+  const trashedSessions: { sessionId: SessionId; deletedAt: number }[] = []
 
   // In-memory browse tree behind the fixture's `browse` picker capability —
   // deterministic content mirroring the design mock so assembled Web tests
@@ -2567,6 +2568,7 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
       list: request => ok(request, {
         items: workspaces.map(w => ({ ...w })),
         archivedSessionIds: [...archivedSessionIds],
+        trashedSessions: trashedSessions.map(item => ({ ...item })),
       }),
       create: (request) => {
         const { path } = request.payload
@@ -2693,6 +2695,33 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
           emitHost({ type: 'host/archived-sessions-changed', archivedSessionIds: [...archivedSessionIds] })
         }
         return ok(request, { archivedSessionIds: [...archivedSessionIds] })
+      },
+      trashSession: (request) => {
+        const missing = requireSession(request)
+        if (missing !== undefined) return missing
+        const { sessionId } = request.payload
+        if (!trashedSessions.some(item => item.sessionId === sessionId)) {
+          trashedSessions.push({ sessionId, deletedAt: Date.now() })
+          emitHost({ type: 'host/trashed-sessions-changed', trashedSessions: trashedSessions.map(item => ({ ...item })) })
+        }
+        return ok(request, { trashedSessions: trashedSessions.map(item => ({ ...item })) })
+      },
+      restoreSession: (request) => {
+        const index = trashedSessions.findIndex(item => item.sessionId === request.payload.sessionId)
+        if (index !== -1) trashedSessions.splice(index, 1)
+        emitHost({ type: 'host/trashed-sessions-changed', trashedSessions: trashedSessions.map(item => ({ ...item })) })
+        return ok(request, { trashedSessions: trashedSessions.map(item => ({ ...item })) })
+      },
+      deleteTrashedSession: (request) => {
+        const index = trashedSessions.findIndex(item => item.sessionId === request.payload.sessionId)
+        if (index !== -1) {
+          trashedSessions.splice(index, 1)
+          const sessionIndex = sessions.findIndex(session => session.sessionId === request.payload.sessionId)
+          if (sessionIndex !== -1) sessions.splice(sessionIndex, 1)
+          emitHost({ type: 'host/trashed-sessions-changed', trashedSessions: trashedSessions.map(item => ({ ...item })) })
+          emitHost({ type: 'host/session-removed', sessionId: request.payload.sessionId })
+        }
+        return ok(request, { trashedSessions: trashedSessions.map(item => ({ ...item })) })
       },
     },
     agentPresets: {
@@ -3105,6 +3134,9 @@ export class FixtureApiClient extends AbstractApiClient {
       case 'workspace.insertBefore': return this.api.workspace.insertBefore(request)
       case 'workspace.insertSessionBefore': return this.api.workspace.insertSessionBefore(request)
       case 'workspace.archiveSession': return this.api.workspace.archiveSession(request)
+      case 'workspace.trashSession': return this.api.workspace.trashSession(request)
+      case 'workspace.restoreSession': return this.api.workspace.restoreSession(request)
+      case 'workspace.deleteTrashedSession': return this.api.workspace.deleteTrashedSession(request)
       case 'skill.list': return this.api.skills.list(request)
       case 'agentPreset.list': return this.api.agentPresets.list(request)
       case 'agentPreset.select': return this.api.agentPresets.select(request)

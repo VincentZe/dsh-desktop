@@ -143,6 +143,9 @@ export interface PersistenceBackend<TornMarker = unknown> {
    */
   loadStored(id: SessionId, signal?: AbortSignal): Promise<StoredPrefix<TornMarker> | undefined>
 
+  /** Permanently remove one stored session and all of its events. */
+  removeStored?(id: SessionId, signal?: AbortSignal): Promise<boolean>
+
   /**
    * Read the current source-qualified revision for one stored session without
    * loading its event log. Returns `undefined` when the identity is absent.
@@ -677,6 +680,27 @@ export class PersistenceCoordinator<TornMarker = unknown> {
       throw new TypeError('session event batch is not losslessly JSON-serializable because it contains non-JSON-serializable data')
     }
     return this.serialize(id, () => this.appendCore(id, batch))
+  }
+
+  /**
+   * Permanently remove one cold session from the backend.
+   * @param id - persisted session identity.
+   * @returns true when storage was removed, false when the id was absent.
+   */
+  async remove(id: SessionId): Promise<boolean> {
+    await this.waitForRetirement(id)
+    return this.serialize(id, async () => {
+      if (this.ctx.sessions.get(id) !== undefined) {
+        throw new Error(`cannot remove live session "${id}"`)
+      }
+      if (this.backend.removeStored === undefined) {
+        throw new Error(`${this.backend.name} does not support permanent session removal`)
+      }
+      const removed = await this.backend.removeStored(id)
+      this.preparations.invalidate(id)
+      if (removed) this.states.delete(id)
+      return removed
+    })
   }
 
   private async appendCore(id: SessionId, events: readonly SessionEvent[]): Promise<void> {

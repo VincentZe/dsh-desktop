@@ -29,6 +29,15 @@ export const workspaceRecord = z.object({
 /** One stored workspace record, inferred from {@link workspaceRecord}. */
 export type WorkspaceRecord = z.infer<typeof workspaceRecord>
 
+/** Durable soft-deletion marker retained until the seven-day retention window expires. */
+export const trashedSession = z.object({
+  sessionId: z.string().transform(SessionId),
+  deletedAt: z.number().int().nonnegative(),
+})
+
+/** One session currently held in the recycle bin. */
+export type TrashedSession = z.infer<typeof trashedSession>
+
 /**
  * Recoverable two-write mutation marker. The marker is persisted before the
  * record/order pair can diverge, so startup can distinguish an interrupted
@@ -43,15 +52,16 @@ const workspacePendingMutation = z.discriminatedUnion('operation', [
  * Durable registry state. `initialized` distinguishes a valid empty registry
  * from one that still needs the header-only history bootstrap;
  * `workspaceIds` is the authoritative display order. `archivedSessionIds` is
- * the registry-global archive set layered over workspace accounting: an
- * archived session keeps its `sessionIds` slot (unarchiving must restore the
- * position), so the set never participates in the one-owner accounting
- * invariant. Defaulted so records written before the field parse unchanged.
+ * the legacy registry-global archive set. `trashedSessions` is the durable
+ * recycle-bin set layered over workspace accounting: a trashed session keeps
+ * its `sessionIds` slot until it is permanently removed. Both fields default
+ * so records written before these fields parse unchanged.
  */
 export const workspaceDomainState = z.object({
   initialized: z.boolean(),
   workspaceIds: z.array(workspaceId),
   archivedSessionIds: z.array(z.string().transform(SessionId)).default([]),
+  trashedSessions: z.array(trashedSession).default([]),
   pendingMutation: workspacePendingMutation.optional(),
 })
 
@@ -69,7 +79,7 @@ export const workspaceDomainSpec = defineDomain({
   version: 2,
   global: {
     schema: workspaceDomainState,
-    initial: { initialized: false, workspaceIds: [], archivedSessionIds: [] },
+    initial: { initialized: false, workspaceIds: [], archivedSessionIds: [], trashedSessions: [] },
   },
   tables: { workspaces: domainTable<WorkspaceId, WorkspaceRecord>(workspaceRecord) },
 })

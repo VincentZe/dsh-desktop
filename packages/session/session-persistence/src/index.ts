@@ -143,6 +143,15 @@ export abstract class SessionPersistence extends Service {
   abstract append(id: SessionId, events: readonly SessionEvent[]): Promise<void>
 
   /**
+   * Permanently remove one cold session and its durable event log.
+   * @param id - persisted session identity.
+   * @returns true when storage was removed, false when the id was absent.
+   */
+  async remove(_id: SessionId): Promise<boolean> {
+    return Promise.reject(new Error('this session persistence backend does not support permanent session removal'))
+  }
+
+  /**
    * Prepare the exact unpublished Session used by resume. Implementations may
    * reuse object graphs retained by an earlier {@link inspect} after confirming
    * their durable revision is still current; disposal releases an unpublished

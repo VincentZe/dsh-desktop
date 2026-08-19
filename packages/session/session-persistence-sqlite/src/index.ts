@@ -182,6 +182,10 @@ export class SqliteSessionPersistence extends SessionPersistence implements Pers
     return this.coordinator.append(id, events)
   }
 
+  override remove(id: SessionId): Promise<boolean> {
+    return this.coordinator.remove(id)
+  }
+
   override prepare(id: SessionId, signal?: AbortSignal): Promise<SessionPreparation> {
     return this.coordinator.prepare(id, signal)
   }
@@ -235,6 +239,27 @@ export class SqliteSessionPersistence extends SessionPersistence implements Pers
     signal?.throwIfAborted()
     const { preserved } = scanRows(eventRows, fromSeq)
     return { meta, events: preserved }
+  }
+
+  /** Delete one session row; its event rows follow through the foreign key. */
+  async removeStored(id: SessionId, signal?: AbortSignal): Promise<boolean> {
+    signal?.throwIfAborted()
+    await this.ready
+    signal?.throwIfAborted()
+    this.db.exec('BEGIN')
+    try {
+      const result = this.db.prepare('DELETE FROM sessions WHERE id = ?').run(id)
+      this.db.exec('COMMIT')
+      signal?.throwIfAborted()
+      return Number(result.changes) > 0
+    } catch (error: unknown) {
+      try {
+        this.db.exec('ROLLBACK')
+      } catch {
+        // Preserve the original database failure.
+      }
+      throw error
+    }
   }
 
   /**

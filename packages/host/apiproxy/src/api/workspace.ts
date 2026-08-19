@@ -35,6 +35,12 @@ export interface WorkspaceView {
   updatedAt: string
 }
 
+/** One session in the durable recycle bin. */
+export interface TrashedSession {
+  sessionId: SessionId
+  deletedAt: number
+}
+
 /** Workspace-domain unary methods (the map keys workspace.* of RpcMethodMap). */
 export interface WorkspaceApi {
   /**
@@ -43,7 +49,11 @@ export interface WorkspaceApi {
    * `host/archived-sessions-changed`). Archived sessions stay in their
    * workspace's `sessionIds` account; grouping surfaces hide them.
    */
-  list(request: RpcRequest<{}>): Promise<RpcResponse<{ items: WorkspaceView[]; archivedSessionIds: SessionId[] }>>
+  list(request: RpcRequest<{}>): Promise<RpcResponse<{
+    items: WorkspaceView[]
+    archivedSessionIds: SessionId[]
+    trashedSessions: TrashedSession[]
+  }>>
 
   /**
    * Creates (or idempotently resolves) a workspace over an EXISTING directory
@@ -106,4 +116,16 @@ export interface WorkspaceApi {
    */
   archiveSession(request: RpcRequest<{ sessionId: SessionId }>):
   Promise<RpcResponse<{ archivedSessionIds: SessionId[] }>>
+
+  /** Move a session into the recycle bin and retain its deletion timestamp. */
+  trashSession(request: RpcRequest<{ sessionId: SessionId }>):
+  Promise<RpcResponse<{ trashedSessions: TrashedSession[] }>>
+
+  /** Restore a session from the recycle bin. */
+  restoreSession(request: RpcRequest<{ sessionId: SessionId }>):
+  Promise<RpcResponse<{ trashedSessions: TrashedSession[] }>>
+
+  /** Permanently delete a session already in the recycle bin. */
+  deleteTrashedSession(request: RpcRequest<{ sessionId: SessionId }>):
+  Promise<RpcResponse<{ trashedSessions: TrashedSession[] }>>
 }

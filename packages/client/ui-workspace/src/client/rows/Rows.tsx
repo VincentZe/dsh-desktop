@@ -8,9 +8,9 @@
 import { useState } from 'react'
 import clsx from 'clsx'
 import {
-  HoverCard, IconArchiveOutline20, IconBranchOutline16, IconEditOutline16,
-  IconEllipsisOutline16, IconFolderClose16, IconFolderOpen16, IconPlusOutline16,
-  IconTrashOutline16, IconTriangleRightFill14, Menu, StateDot,
+  HoverCard, IconArchiveOutline20, IconBranchOutline16, IconCheckOutline16,
+  IconEditOutline16, IconEllipsisOutline16, IconFolderClose16, IconFolderOpen16, IconPlusOutline16,
+  IconRefreshOutline16, IconTrashOutline16, IconTriangleRightFill14, Menu, StateDot,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { WorkspaceBrowserProps } from '../contract/slots.ts'
@@ -119,7 +119,9 @@ export function ProjectRowItem({ group, onToggle, onCreate, actions, drag, t }: 
 }) {
   const row = group
   // The ungrouped bucket has no workspace title: its label is dictionary copy.
-  const label = row.workspaceId === undefined ? t('group.ungrouped') : row.label
+  const label = row.isTrash
+    ? t('group.trash')
+    : row.workspaceId === undefined ? t('group.ungrouped') : row.label
   const active = group.expanded && group.containsCurrent
   const [menuOpen, setMenuOpen] = useState(false)
   const workspaceMenuItems = [
@@ -143,7 +145,7 @@ export function ProjectRowItem({ group, onToggle, onCreate, actions, drag, t }: 
       onDragEnd={drag?.end}
     >
       <span className={clsx(css.slot, css.folder, active && css.folderActive)}>
-        {row.expanded ? <IconFolderOpen16 /> : <IconFolderClose16 />}
+        {row.isTrash ? <IconTrashOutline16 /> : row.expanded ? <IconFolderOpen16 /> : <IconFolderClose16 />}
       </span>
       <span className={clsx(css.slot, css.chevron)}>
         <IconTriangleRightFill14 className={clsx(css.arrow, row.expanded && css.arrowOpen)} />
@@ -152,7 +154,7 @@ export function ProjectRowItem({ group, onToggle, onCreate, actions, drag, t }: 
         <span className={css.title}>{label}</span>
       </span>
       <span className={css.rowActions}>
-        {actions !== undefined && (
+        {actions !== undefined && !row.isTrash && (
           <Menu
             open={menuOpen}
             onClose={() => { setMenuOpen(false) }}
@@ -180,14 +182,14 @@ export function ProjectRowItem({ group, onToggle, onCreate, actions, drag, t }: 
             )}
           />
         )}
-        <button
+        {!row.isTrash && <button
           type="button"
           className={css.iconButton}
           aria-label={t('actions.newSession.aria', { name: label })}
           onClick={(e) => { e.stopPropagation(); onCreate() }}
         >
           <IconPlusOutline16 />
-        </button>
+        </button>}
       </span>
     </div>
   )
@@ -345,12 +347,20 @@ export function SearchResultItem({ result, currentId, onOpen, t }: {
  * @param props.onRename - open the session rename dialog (id + current title).
  * @param props.onFork - fork a session at its last completed turn.
  * @param props.onArchive - archive a session by id.
+ * @param props.onSelectionBrushStart - record a held primary pointer and its selection operation.
+ * @param props.onSelectionBrushEnter - apply the brush operation to an entered row.
  * @param props.drag - optional draggable-row wiring.
  * @param props.flat - omit the empty status slot in the hierarchy-free flat list.
  * @param props.t - the browser root's locale seat.
  * @returns the session row.
  */
-export function SessionNodeItem({ node, currentId, now, onOpen, onRename, onFork, onArchive, drag, flat = false, t }: {
+export function SessionNodeItem({
+  node, currentId, now, onOpen, onRename, onFork, onArchive,
+  onTrash, onRestore, onDeleteForever, isTrash,
+  selectionMode, selectedForBulk, selectedCount,
+  onStartSelection, onToggleSelection, onTrashSelected, onSelectionBrushStart, onSelectionBrushEnter,
+  drag, flat = false, t,
+}: {
   node: SessionNode
   currentId: string | undefined
   now: number
@@ -361,6 +371,25 @@ export function SessionNodeItem({ node, currentId, now, onOpen, onRename, onFork
   onFork: (id: SessionNode['id']) => void
   /** Archive this session (row menu action; commits without a dialog). */
   onArchive: (id: SessionNode['id']) => void
+  /** Move this session to the recycle bin. */
+  onTrash?: ((id: SessionNode['id']) => void) | undefined
+  /** Restore this session from the recycle bin. */
+  onRestore?: ((id: SessionNode['id']) => void) | undefined
+  /** Permanently delete this recycled session. */
+  onDeleteForever?: ((id: SessionNode['id']) => void) | undefined
+  /** Whether this row belongs to the recycle-bin group. */
+  isTrash?: boolean | undefined
+  /** Bulk-selection state owned by WorkspaceBrowser. */
+  selectionMode?: boolean | undefined
+  selectedForBulk?: boolean | undefined
+  selectedCount?: number | undefined
+  onStartSelection?: ((id: SessionNode['id']) => void) | undefined
+  onToggleSelection?: ((id: SessionNode['id']) => void) | undefined
+  onTrashSelected?: (() => void) | undefined
+  /** Start selecting rows while the primary pointer is held. */
+  onSelectionBrushStart?: ((id: SessionNode['id'], pointerId: number, operation: 'replace' | 'add' | 'remove') => void) | undefined
+  /** Apply the held pointer's selection operation to an entered row. */
+  onSelectionBrushEnter?: ((id: SessionNode['id'], pointerId: number) => void) | undefined
   /** Present only on draggable rows (workspace-group sessions outside search). */
   drag?: RowDragProps | undefined
   /** The row is rendered without a parent Workspace header. */
@@ -370,32 +399,83 @@ export function SessionNodeItem({ node, currentId, now, onOpen, onRename, onFork
   const row = node
   const title = displayTitle(node, t)
   const selected = node.id === currentId
+  const trash = isTrash === true
   const statuses = sessionStatuses(node, t)
   const primaryStatus = statuses[0]
   const showStatus = primaryStatus.state !== 'done' || row.completed
   const [menuOpen, setMenuOpen] = useState(false)
+  const [contextMenuPoint, setContextMenuPoint] = useState<{ x: number; y: number } | null>(null)
   // Archive hides the row through the registry-global archive set and never
   // touches the session log, so it is not styled as destructive and needs no
   // confirmation dialog.
-  const sessionMenuItems = [
-    { id: 'rename', label: t('rename'), icon: <IconEditOutline16 /> },
-    { id: 'fork', label: t('menu.fork'), icon: <IconBranchOutline16 /> },
-    // 20-native glyph in the menu's 16px icon slot (Menu.module.css .itemIcon).
-    { id: 'archive', label: t('menu.archiveSession'), icon: <IconArchiveOutline20 size={16} /> },
-  ]
+  const sessionMenuItems = trash
+    ? [
+      { id: 'restore', label: t('menu.restoreSession'), icon: <IconRefreshOutline16 /> },
+      { id: 'delete-forever', label: t('menu.deleteForever'), icon: <IconTrashOutline16 />, danger: true },
+    ]
+    : [
+      ...(onStartSelection === undefined ? [] : [{
+        id: 'select', label: selectedForBulk === true ? t('menu.deselectSession') : t('menu.selectSession'),
+        icon: <IconCheckOutline16 />,
+      }]),
+      { id: 'rename', label: t('rename'), icon: <IconEditOutline16 /> },
+      { id: 'fork', label: t('menu.fork'), icon: <IconBranchOutline16 /> },
+      // 20-native glyph in the menu's 16px icon slot (Menu.module.css .itemIcon).
+      { id: 'archive', label: t('menu.archiveSession'), icon: <IconArchiveOutline20 size={16} /> },
+      { id: 'trash', label: selectedCount !== undefined && selectedCount > 1 ? t('menu.deleteSelected') : t('menu.deleteSession'), icon: <IconTrashOutline16 />, danger: true },
+    ]
+  const handleMenuSelect = (id: string): void => {
+    setMenuOpen(false)
+    setContextMenuPoint(null)
+    if (id === 'restore') onRestore?.(node.id)
+    else if (id === 'delete-forever') onDeleteForever?.(node.id)
+    else if (id === 'select') {
+      if (selectionMode === true) onToggleSelection?.(node.id)
+      else onStartSelection?.(node.id)
+    }
+    else if (id === 'rename') onRename(node.id, row.title)
+    else if (id === 'fork') onFork(node.id)
+    else if (id === 'archive') onArchive(node.id)
+    else if (id === 'trash') {
+      if (selectionMode === true && selectedCount !== undefined && selectedCount > 1) onTrashSelected?.()
+      else onTrash?.(node.id)
+    }
+  }
   // Figma session cell: pad 8, status slot 16, then a 4px title gap.
   const ownRow = (
     <div
       className={clsx(
-        css.sessionRow, selected && css.selected, menuOpen && css.menuOpen,
+        css.sessionRow, selected && css.selected, selectedForBulk && css.bulkSelected,
+        trash && css.trashSessionRow, (menuOpen || contextMenuPoint !== null) && css.menuOpen,
         flat && !showStatus && css.flatSessionRowWithoutStatus,
         drag?.marker === 'before' && css.dropBefore, drag?.marker === 'after' && css.dropAfter,
       )}
       role="treeitem"
       aria-selected={selected}
-      onClick={() => { onOpen(node.id) }}
-      draggable={drag !== undefined}
-      onDragStart={drag === undefined
+      onPointerDown={(event) => {
+        if (event.button !== 0 || selectionMode !== true || trash || row.blank) return
+        const target = event.target
+        if (target instanceof Element && target.closest('button, input, textarea, select, [role="button"], [role="menuitem"]') !== null) return
+        const operation = event.ctrlKey ? 'remove' : event.shiftKey ? 'add' : 'replace'
+        onSelectionBrushStart?.(node.id, event.pointerId, operation)
+      }}
+      onPointerEnter={(event) => {
+        if (event.buttons !== 0 && (event.buttons & 1) !== 0 && selectionMode === true && !trash && !row.blank) {
+          onSelectionBrushEnter?.(node.id, event.pointerId)
+        }
+      }}
+      onClick={() => {
+        if (selectionMode === true) onToggleSelection?.(node.id)
+        else if (!trash) onOpen(node.id)
+      }}
+      onContextMenu={(event) => {
+        if (row.blank) return
+        event.preventDefault()
+        event.stopPropagation()
+        setContextMenuPoint({ x: event.clientX, y: event.clientY })
+      }}
+      draggable={drag !== undefined && !selectionMode && !trash}
+      onDragStart={drag === undefined || selectionMode || trash
         ? undefined
         : (e) => {
           e.dataTransfer.effectAllowed = 'move'
@@ -403,7 +483,7 @@ export function SessionNodeItem({ node, currentId, now, onOpen, onRename, onFork
           drag.start()
         }}
       onDragEnd={drag?.end}
-      onDragOver={drag === undefined
+      onDragOver={drag === undefined || selectionMode || trash
         ? undefined
         : (e) => {
           if (!drag.active) return
@@ -411,7 +491,7 @@ export function SessionNodeItem({ node, currentId, now, onOpen, onRename, onFork
           e.dataTransfer.dropEffect = 'move'
           drag.hover(rowHalf(e))
         }}
-      onDrop={drag === undefined
+      onDrop={drag === undefined || selectionMode || trash
         ? undefined
         : (e) => {
           if (!drag.active) return
@@ -422,6 +502,16 @@ export function SessionNodeItem({ node, currentId, now, onOpen, onRename, onFork
       {/* Pending interaction and own or descendant activity outrank the
           finished-but-unviewed reminder, which returns after activity stops
           and is cleared by opening the session. */}
+      {selectionMode === true && !trash && !row.blank && (
+        <input
+          type="checkbox"
+          className={css.selectionCheckbox}
+          checked={selectedForBulk === true}
+          aria-label={t('select.session.aria', { name: title })}
+          onClick={(event) => { event.stopPropagation() }}
+          onChange={() => { onToggleSelection?.(node.id) }}
+        />
+      )}
       {(!flat || showStatus) && (
         <span className={css.slot}>
           {showStatus && <SessionStatusDots statuses={statuses} />}
@@ -433,18 +523,13 @@ export function SessionNodeItem({ node, currentId, now, onOpen, onRename, onFork
           (rename/fork/archive) would all act on content that does not
           exist — both trailing cells stay off until the first prompt. */}
       {!row.blank && <span className={css.time}>{timeLabel(row.updatedAt, now, t)}</span>}
-      {!row.blank && (
+      {!row.blank && !trash && (
         <span className={css.rowActions}>
           <Menu
             open={menuOpen}
             onClose={() => { setMenuOpen(false) }}
             items={sessionMenuItems}
-            onSelect={(id) => {
-              setMenuOpen(false)
-              if (id === 'rename') onRename(node.id, row.title)
-              if (id === 'fork') onFork(node.id)
-              if (id === 'archive') onArchive(node.id)
-            }}
+            onSelect={handleMenuSelect}
             portal
             closeOnPointerLeave
             anchor={(
@@ -460,13 +545,28 @@ export function SessionNodeItem({ node, currentId, now, onOpen, onRename, onFork
           />
         </span>
       )}
+      {!row.blank && (
+        <Menu
+          open={contextMenuPoint !== null}
+          onClose={() => { setContextMenuPoint(null) }}
+          items={sessionMenuItems}
+          onSelect={handleMenuSelect}
+          portal
+          getAnchorRect={() => {
+            if (contextMenuPoint === null) return null
+            const { x, y } = contextMenuPoint
+            return { left: x, right: x, top: y, bottom: y, width: 0, height: 0 } as DOMRect
+          }}
+          anchor={<span className={css.contextMenuAnchor} aria-hidden="true" />}
+        />
+      )}
     </div>
   )
   return (
     <HoverCard
       anchor={ownRow}
       content={<SessionHoverContent node={node} now={now} t={t} />}
-      disabled={menuOpen || drag?.active === true}
+      disabled={menuOpen || contextMenuPoint !== null || drag?.active === true}
       copyText={row.blank ? undefined : row.title}
       copyLabel={t('copy')}
       copiedLabel={t('hover.copied')}

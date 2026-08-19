@@ -38,8 +38,12 @@ const workspace = (id: string, sessionIds: string[], title = id): WorkspaceView 
   workspaceId: wid(id), path: `/projects/${id}`, title,
   sessionIds: sessionIds.map(sid), createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
 })
-const workspaceState = (items: readonly WorkspaceView[], archivedSessionIds: readonly SessionId[] = []): WorkspaceListState => ({
-  items, archivedSessionIds, state: 'idle', phase: 'ready', error: null, baselinesReady: true,
+const workspaceState = (
+  items: readonly WorkspaceView[],
+  archivedSessionIds: readonly SessionId[] = [],
+  trashedSessions: WorkspaceListState['trashedSessions'] = [],
+): WorkspaceListState => ({
+  items, archivedSessionIds, trashedSessions, state: 'idle', phase: 'ready', error: null, baselinesReady: true,
   recentWorkspaceId: items[0]?.workspaceId,
 })
 function hook<T>(snapshot: T) {
@@ -76,6 +80,9 @@ function mount(overrides: Partial<WorkspaceBrowserProps> = {}) {
     renameWorkspace: vi.fn(async () => {}),
     deleteWorkspace: vi.fn(async () => {}),
     archiveSession: vi.fn(async () => {}),
+    trashSession: vi.fn(async () => {}),
+    restoreSession: vi.fn(async () => {}),
+    deleteTrashedSession: vi.fn(async () => {}),
     insertWorkspaceBefore: vi.fn(async () => {}),
     insertSessionBefore: vi.fn(async () => {}),
     createWorkspace: vi.fn(async () => workspace('created', [])),
@@ -333,6 +340,141 @@ describe('WorkspaceBrowser', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: '单列表' }))
     expect(screen.getByText('kept-s')).toBeTruthy()
     expect(screen.queryByText('gone-s')).toBeNull()
+  })
+
+  it('enters multi-select mode from the header and submits selected sessions in order', async () => {
+    const trashSession = vi.fn(async () => {})
+    const b = mount({
+      useSessions: hook(sessionState([summary('one', 2), summary('two', 1)])),
+      useWorkspaces: hook(workspaceState([workspace('alpha', ['one', 'two'])])),
+      trashSession,
+    })
+    fireEvent.click(screen.getByText('alpha'))
+    fireEvent.click(screen.getByRole('button', { name: '选择会话' }))
+    expect(screen.getByText('已选择 0 个会话')).toBeTruthy()
+
+    fireEvent.click(screen.getByText('one'))
+    fireEvent.click(screen.getByText('two'))
+    expect(screen.getByText('已选择 2 个会话')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '删除所选会话' }))
+
+    await waitFor(() => {
+      expect(trashSession).toHaveBeenNthCalledWith(1, sid('one'))
+      expect(trashSession).toHaveBeenNthCalledWith(2, sid('two'))
+    })
+    expect(screen.queryByText('已选择 2 个会话')).toBeNull()
+    expect(b.store.getSnapshot().groupBy).toBe('workspace')
+  })
+
+  it('selects every session crossed by a held primary pointer in multi-select mode', () => {
+    const sessions = sessionState([summary('one', 3), summary('two', 2), summary('three', 1)])
+    mount({
+      useSessions: hook(sessions),
+      useWorkspaces: hook(workspaceState([workspace('alpha', ['one', 'two', 'three'])])),
+    })
+    fireEvent.click(screen.getByText('alpha'))
+    fireEvent.click(screen.getByRole('button', { name: '选择会话' }))
+
+    const rows = ['one', 'two', 'three'].map(title => (
+      screen.getByText(title).closest('[role="treeitem"]') as HTMLElement
+    )) as [HTMLElement, HTMLElement, HTMLElement]
+    const [firstRow, secondRow, thirdRow] = rows
+    fireEvent.pointerDown(firstRow, { button: 0, pointerId: 1 })
+    fireEvent.pointerEnter(secondRow, { buttons: 1, pointerId: 1 })
+    fireEvent.pointerEnter(thirdRow, { buttons: 1, pointerId: 1 })
+    fireEvent.pointerUp(window, { pointerId: 1 })
+
+    expect(screen.getByText('已选择 3 个会话')).toBeTruthy()
+    expect(rows.every(row => (
+      row.querySelector('input[type="checkbox"]') as HTMLInputElement
+    ).checked)).toBe(true)
+    fireEvent.click(thirdRow)
+    expect(screen.getByText('已选择 3 个会话')).toBeTruthy()
+  })
+
+  it('uses Shift to union and Ctrl to subtract brush-selected sessions', () => {
+    const sessions = sessionState([summary('one', 3), summary('two', 2), summary('three', 1)])
+    mount({
+      useSessions: hook(sessions),
+      useWorkspaces: hook(workspaceState([workspace('alpha', ['one', 'two', 'three'])])),
+    })
+    fireEvent.click(screen.getByText('alpha'))
+    fireEvent.click(screen.getByRole('button', { name: '选择会话' }))
+
+    fireEvent.click(screen.getByText('one'))
+    const secondRow = screen.getByText('two').closest('[role="treeitem"]') as HTMLElement
+    const thirdRow = screen.getByText('three').closest('[role="treeitem"]') as HTMLElement
+    fireEvent.pointerDown(secondRow, { button: 0, pointerId: 2, shiftKey: true })
+    fireEvent.pointerEnter(thirdRow, { buttons: 1, pointerId: 2 })
+    fireEvent.pointerUp(window, { pointerId: 2 })
+    expect(screen.getByText('已选择 3 个会话')).toBeTruthy()
+
+    fireEvent.pointerDown(thirdRow, { button: 0, pointerId: 3, ctrlKey: true })
+    fireEvent.pointerEnter(secondRow, { buttons: 1, pointerId: 3 })
+    fireEvent.pointerUp(window, { pointerId: 3 })
+    expect(screen.getByText('已选择 1 个会话')).toBeTruthy()
+    expect((screen.getByText('one').closest('[role="treeitem"]')?.querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(true)
+    expect((secondRow.querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(false)
+    expect((thirdRow.querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(false)
+
+    fireEvent.pointerDown(secondRow, { button: 0, pointerId: 4 })
+    fireEvent.pointerEnter(thirdRow, { buttons: 1, pointerId: 4 })
+    fireEvent.pointerUp(window, { pointerId: 4 })
+    expect(screen.getByText('已选择 2 个会话')).toBeTruthy()
+    expect((screen.getByText('one').closest('[role="treeitem"]')?.querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(false)
+    expect((secondRow.querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(true)
+    expect((thirdRow.querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(true)
+  })
+
+  it('keeps a plain selection click as a single toggle after brush support is enabled', () => {
+    const sessions = sessionState([summary('one', 2), summary('two', 1)])
+    mount({
+      useSessions: hook(sessions),
+      useWorkspaces: hook(workspaceState([workspace('alpha', ['one', 'two'])])),
+    })
+    fireEvent.click(screen.getByText('alpha'))
+    fireEvent.click(screen.getByRole('button', { name: '选择会话' }))
+
+    fireEvent.click(screen.getByText('one'))
+    expect(screen.getByText('已选择 1 个会话')).toBeTruthy()
+    expect((screen.getByText('two').closest('[role="treeitem"]')?.querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(false)
+  })
+
+  it('deletes one session from its context menu', () => {
+    const trashSession = vi.fn(async () => {})
+    mount({
+      useSessions: hook(sessionState([summary('one', 1)])),
+      useWorkspaces: hook(workspaceState([workspace('alpha', ['one'])])),
+      trashSession,
+    })
+    fireEvent.click(screen.getByText('alpha'))
+    const row = screen.getByText('one').closest('[role="treeitem"]') as HTMLElement
+    fireEvent.contextMenu(row)
+    fireEvent.click(screen.getByRole('menuitem', { name: '删除会话' }))
+    expect(trashSession).toHaveBeenCalledWith(sid('one'))
+  })
+
+  it('offers restore and permanent deletion inside the expanded recycle bin', () => {
+    const restoreSession = vi.fn(async () => {})
+    const deleteTrashedSession = vi.fn(async () => {})
+    const trashed = [{ sessionId: sid('gone'), deletedAt: 123 }]
+    mount({
+      useSessions: hook(sessionState([summary('gone', 1)])),
+      useWorkspaces: hook(workspaceState([workspace('alpha', ['gone'])], [], trashed)),
+      restoreSession,
+      deleteTrashedSession,
+    })
+    fireEvent.click(screen.getByText('回收站'))
+    expect(screen.getByText('gone')).toBeTruthy()
+    const row = screen.getByText('gone').closest('[role="treeitem"]') as HTMLElement
+
+    fireEvent.contextMenu(row)
+    fireEvent.click(screen.getByRole('menuitem', { name: '恢复会话' }))
+    expect(restoreSession).toHaveBeenCalledWith(sid('gone'))
+
+    fireEvent.contextMenu(row)
+    fireEvent.click(screen.getByRole('menuitem', { name: '永久删除' }))
+    expect(deleteTrashedSession).toHaveBeenCalledWith(sid('gone'))
   })
 
   it('logs and keeps the tree when the archive call rejects', async () => {
@@ -879,7 +1021,9 @@ describe('WorkspaceBrowser', () => {
       insertSessionBefore,
     })
     expect(restored.store.getSnapshot().sessionOrderByAccount[UNGROUPED_KEY]).toEqual(['two', 'three', 'one'])
-    expect(screen.getAllByRole('treeitem').slice(1).map(row => row.textContent)).toEqual([
+    expect(screen.getAllByRole('treeitem')
+      .filter(row => /two|three|one/.test(row.textContent ?? ''))
+      .map(row => row.textContent)).toEqual([
       expect.stringContaining('two'),
       expect.stringContaining('three'),
       expect.stringContaining('one'),
