@@ -1,6 +1,6 @@
 # dsh-desktop
 
-[English](README.md) | 中文
+[English](README.en.md) | 中文
 
 基于 DeepSeek Harness、[LunaUI](https://github.com/VincentZe/LunaUI) 的 Windows 桌面壳。
 
@@ -8,8 +8,9 @@
 
 ## 主要改动
 
-- 无边框圆角原生窗口。
-- 无需环境配置，但不能装插件。
+- 便携包64MB。
+- 独立窗口。
+- 无需环境配置，但预期不能装插件。
 - 对话管理增强，包括多选、批量操作、回收站保留和模型思考模式配置。
 - 可通过 Codex 调用 `dsh-subagent`。
 

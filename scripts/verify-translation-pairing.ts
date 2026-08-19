@@ -194,8 +194,9 @@ for (const source of [...pairAnchors].sort()) {
   }
 
   if (isExcluded(source)) {
-    if (have.zh) errors.push(`${zh}: ${source} is excluded from pairing (generated or bilingual-by-construction); this translation must not exist`)
-    if (have.meta) errors.push(`${meta}: ${source} is excluded from pairing; this consistency record must not exist`)
+    // A documented root landing-page compatibility file may be excluded alongside its source.
+    if (have.zh && !isExcluded(zh)) errors.push(`${zh}: ${source} is excluded from pairing (generated or bilingual-by-construction); this translation must not exist`)
+    if (have.meta && !isExcluded(meta)) errors.push(`${meta}: ${source} is excluded from pairing; this consistency record must not exist`)
     continue
   }
   const missing = Object.entries(have).filter(([, ok]) => !ok).map(([k]) => (k === 'source' ? source : k === 'zh' ? zh : meta))

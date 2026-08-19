@@ -1,27 +1,29 @@
 # dsh-desktop
 
-English | [中文](README.zh.md)
+[English](README.en.md) | 中文
 
-Windows desktop shell for DeepSeek Harness and [LunaUI](https://github.com/VincentZe/LunaUI).
+基于 DeepSeek Harness、[LunaUI](https://github.com/VincentZe/LunaUI) 的 Windows 桌面壳。
 
 ![dsh-desktop](assets/readme/img1.jpg)
 
-## Highlights
+## 主要改动
 
-- Borderless rounded native window.
-- No environment setup is required, but plugins cannot be installed.
-- Conversation management improvements including multi-select, batch operations, recycle-bin retention, and model thinking-mode configuration.
-- `dsh-subagent` can be called from Codex.
+- 便携包64MB。
+- 独立窗口。
+- 无需环境配置，但预期不能装插件。
+- 对话管理增强，包括多选、批量操作、回收站保留和模型思考模式配置。
+- 可通过 Codex 调用 `dsh-subagent`。
 
 ## dsh subagent
 
-Install the portable package directly; it includes `dsh-subagent\SKILL.md`. It supports one-shot and persistent JSON-RPC runners, workspace grouping, lifecycle status, tool-error summaries, and caller-controlled interactions.
+直接安装 portable 包内置 `dsh-subagent\SKILL.md`，支持一次性 runner、持久 JSON-RPC runner、workspace 归组、生命周期状态、工具失败摘要和调用方处理交互问题。
 
-More details: [desktop README](desktop/README.md) and [subagent cookbook](docs/cookbook/running-subagent.md).
+更多信息见 [desktop README](desktop/README.md) 和 [subagent 使用手册](docs/cookbook/running-subagent.md)。
 
-## Run
 
-### Run from source
+## 运行
+
+### 从源码运行
 
 ```powershell
 pnpm install
@@ -29,11 +31,11 @@ pnpm run build
 pnpm dsh web
 ```
 
-### Build portable desktop
+### 构建 portable desktop
 
 ```powershell
 cd desktop
 .\build.ps1 -LunaUiDir <path-to-LunaUI> -WebView2Root <path-to-webview2-sdk>
 ```
 
-The portable output is `desktop\build\portable`.
+portable 产物位于 `desktop\build\portable`。
