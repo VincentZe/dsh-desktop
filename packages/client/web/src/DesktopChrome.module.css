@@ -12,7 +12,10 @@
   --dsh-resize-x: 0px;
   --dsh-resize-y: 0px;
   --dsh-resize-halo-size: 64px;
+  --dsh-resize-halo-fade-stop: 20%;
   --dsh-resize-mask-size: 320px;
+  --dsh-resize-mask-fade-start: 15%;
+  --dsh-resize-mask-fade-end: 100%;
   isolation: isolate;
   background: var(--dsw-alias-bg-base, #0e0f13);
   color: var(--dsw-alias-label-primary, #e7eaf0);
@@ -54,12 +57,12 @@
   position: absolute;
   inset: 0;
   z-index: 2000;
-  border: 14px solid transparent;
+  border: 1px solid transparent;
   border-radius: inherit;
   background: radial-gradient(
     circle var(--dsh-resize-halo-size) at var(--dsh-resize-x) var(--dsh-resize-y),
     color-mix(in srgb, var(--dsw-alias-state-business-primary, #5b7cff) 28%, transparent),
-    transparent 74%
+    transparent var(--dsh-resize-halo-fade-stop)
   );
   box-shadow:
     inset 0 0 22px color-mix(in srgb, var(--dsw-alias-state-business-primary, #5b7cff) 26%, transparent),
@@ -70,8 +73,8 @@
   mask:
     linear-gradient(#000 0 0) border-box,
     linear-gradient(#000 0 0) padding-box,
-    radial-gradient(circle var(--dsh-resize-mask-size) at var(--dsh-resize-x) var(--dsh-resize-y), #000 0%, #000 72%, transparent 100%) border-box;
-  mask-composite: exclude, intersect;
+    radial-gradient(circle var(--dsh-resize-mask-size) at var(--dsh-resize-x) var(--dsh-resize-y), transparent 0%, transparent var(--dsh-resize-mask-fade-start), #000 var(--dsh-resize-mask-fade-end)) border-box;
+  mask-composite: exclude, intersect, intersect;
   transition: opacity 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
 }
 
@@ -84,11 +87,14 @@
   opacity: 1;
   border-color: var(--dsw-alias-state-business-primary, #5b7cff);
   --dsh-resize-halo-size: 76px;
+  --dsh-resize-halo-fade-stop: 20%;
   --dsh-resize-mask-size: 380px;
+  --dsh-resize-mask-fade-start: 15%;
+  --dsh-resize-mask-fade-end: 100%;
   background: radial-gradient(
     circle var(--dsh-resize-halo-size) at var(--dsh-resize-x) var(--dsh-resize-y),
     color-mix(in srgb, var(--dsw-alias-state-business-primary, #5b7cff) 48%, transparent),
-    transparent 72%
+    transparent var(--dsh-resize-halo-fade-stop)
   );
   box-shadow:
     inset 0 0 28px color-mix(in srgb, var(--dsw-alias-state-business-primary, #5b7cff) 46%, transparent),

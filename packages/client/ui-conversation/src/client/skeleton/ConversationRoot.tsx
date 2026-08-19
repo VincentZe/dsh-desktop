@@ -185,6 +185,14 @@ export function ConversationRoot({
 
   return (
     <div className={css.root} data-phase={phase}>
+      {hero && (
+        <div
+          className={css.topDragRegion}
+          data-conversation-drag-region=""
+          data-dsh-window-drag="true"
+          aria-hidden="true"
+        />
+      )}
       {renderSlot('conversation.session.header', {})}
       <div className={css.scrollBody} data-conversation-scroll="">
         {renderSlot('conversation.session', {})}

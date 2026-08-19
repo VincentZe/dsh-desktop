@@ -145,9 +145,9 @@ describe('DesktopChrome', () => {
       x: 10, y: 20, toJSON: () => ({}),
     })
 
-    fireEvent.pointerMove(shell, { button: 0, clientX: 12, clientY: 200 })
+    fireEvent.pointerMove(shell, { button: 0, clientX: 24, clientY: 200 })
     expect(shell.getAttribute('data-resize-hover')).toBe('left')
-    fireEvent.pointerDown(view.getByTestId('edge-button'), { button: 0, clientX: 12, clientY: 200 })
+    fireEvent.pointerDown(view.getByTestId('edge-button'), { button: 0, clientX: 24, clientY: 200 })
     expect(bridge.messages.slice(1)).toEqual([
       { type: 'window', action: 'resize', edge: 'left' },
     ])

@@ -4,6 +4,7 @@
    a 2px active bar. */
 
 .root {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -23,6 +24,16 @@
   --dsh-composer-card-max-width: calc(var(--dsh-chat-content-width) + 32px);
   --dsh-composer-side-clearance: 16px;
   --dsh-composer-dock-inset: 8px;
+}
+
+/* A blank conversation has no visible Session header, but the native shell
+   still needs an empty top strip from which the window can be moved. Keep it
+   out of layout so centering the Hero does not change between phases. */
+.topDragRegion {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 2;
+  height: 56px;
 }
 
 .header {
@@ -228,6 +239,7 @@
   flex: 1;
   flex-direction: column;
   min-height: 0;
+  margin-block: 8px;
   overflow-y: auto;
   /* The column scrolls on ONE axis. Stating `hidden` rather than leaving the
      initial `visible` is what removes the horizontal bar: a box that scrolls in

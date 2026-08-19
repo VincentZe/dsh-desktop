@@ -122,8 +122,9 @@ LRESULT CALLBACK AppWindowProc(HWND hwnd, UINT message, WPARAM wparam,
             std::to_wstring(app->config.start_timeout_seconds) + L"s).\n\n" +
             app->backend.Diagnostics();
         ShowFatal(*app, L"DeepSeek Harness start timeout", detail);
+        return 0;
       }
-      return 0;
+      break;
     default:
       break;
   }

@@ -95,7 +95,7 @@ function isWindowDragTarget(target: EventTarget | null): boolean {
 function resizeEdgeAt(element: HTMLElement, clientX: number, clientY: number): WindowResizeEdge | undefined {
   const rect = element.getBoundingClientRect()
   if (rect.width <= 0 || rect.height <= 0) return undefined
-  const size = 8
+  const size = 16
   const onLeft = clientX >= rect.left && clientX - rect.left <= size
   const onRight = clientX <= rect.right && rect.right - clientX <= size
   const onTop = clientY >= rect.top && clientY - rect.top <= size

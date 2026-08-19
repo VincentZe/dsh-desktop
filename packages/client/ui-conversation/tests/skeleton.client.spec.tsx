@@ -383,6 +383,16 @@ describe('ConversationRoot resident composer', () => {
     expect(b.view.getByText('Selected Folder')).toBeTruthy()
   })
 
+  it('hero phase: keeps a dedicated top window-drag region when the header is hidden', () => {
+    const b = mount(conversationSnapshot({ composerPhase: 'blank', blank: true }), undefined, undefined, {
+      summaryBlank: true,
+    })
+    const dragRegion = b.view.container.querySelector('[data-conversation-drag-region]')
+    expect(dragRegion).not.toBeNull()
+    expect(dragRegion?.getAttribute('data-dsh-window-drag')).toBe('true')
+    expect(dragRegion?.getAttribute('aria-hidden')).toBe('true')
+  })
+
   it('settling phase: a summary that does not prove the session blank hides the composer while it opens', () => {
     const b = mount(conversationSnapshot({ composerPhase: 'blank', blank: true, openState: 'loading' }))
     const root = b.view.container.querySelector('[data-phase]')
