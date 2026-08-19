@@ -8,8 +8,16 @@
 
 import { loadLayeredEnv } from '@deepseek-ai/dsh-app-boot'
 import { runFixedWebProfile } from './profile-boot.ts'
+import { runnerArgsFromWebBundleArgv } from './web-bundle-dispatch.ts'
 
-await runFixedWebProfile({
-  environment: loadLayeredEnv('dsh-web'),
-  args: process.argv.slice(2),
-})
+const runnerArgs = runnerArgsFromWebBundleArgv(process.argv)
+if (runnerArgs !== undefined) {
+  const { runWindowsAclRunner } = await import('@deepseek-ai/dsh-sandbox-windows-acl/runner')
+  process.exitCode = await runWindowsAclRunner(runnerArgs)
+} else {
+  process.env.DSH_FIXED_WEB_RUNTIME = '1'
+  await runFixedWebProfile({
+    environment: loadLayeredEnv('dsh-web'),
+    args: process.argv.slice(2),
+  })
+}

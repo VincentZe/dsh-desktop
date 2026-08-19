@@ -45,7 +45,8 @@
  */
 
 import { existsSync, mkdtempSync, rmSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { win32 } from './ffi.ts'
 import { AclSandbox, assertTempRootOutsideWorkspace } from './index.ts'
@@ -72,7 +73,7 @@ interface ParsedArgs {
   args: string[]
 }
 
-function parseArgs(raw: string[]): ParsedArgs {
+function parseArgs(raw: readonly string[]): ParsedArgs {
   let workspace: string | undefined
   let temp: string | undefined
   let mode: string | undefined
@@ -112,8 +113,8 @@ function requireDirectory(label: string, path: string): void {
   }
 }
 
-async function main(): Promise<number> {
-  const parsed = parseArgs(process.argv.slice(2))
+async function main(rawArgs: readonly string[]): Promise<number> {
+  const parsed = parseArgs(rawArgs)
   // Both directories are validated in both modes: a provider bug that passes
   // a bogus root must fail loudly at the runner boundary, never mid-child.
   requireDirectory('--workspace', parsed.workspace)
@@ -204,23 +205,44 @@ async function main(): Promise<number> {
   }
 }
 
-main().then(
-  (exitCode) => {
-    // Exit-code mirroring is full-width on Windows, verified empirically on
-    // this machine (Windows 11 build 26200, Node 24): a child that exits
-    // with the NTSTATUS 0xC0000005 (STATUS_ACCESS_VIOLATION) is read back
-    // by GetExitCodeProcess as the uint32 3221225477, and after
-    // process.exitCode = 3221225477 the parent observes exactly
-    // 3221225477 (spawnSync status). PowerShell's $LASTEXITCODE and cmd
-    // print the signed view (-1073741819), but no truncation or masking
-    // happens anywhere in the chain — the mirror contract holds for the
-    // full 32-bit range, so no re-mapping is needed.
-    process.exitCode = exitCode
-  },
-  (error: unknown) => {
+/**
+ * Run the Windows ACL runner for explicit argv, returning its child or runner
+ * failure exit code. Importing this module does not start a process; the fixed
+ * Web SEA entry calls this function after consuming {@link WINDOWS_ACL_RUNNER_ARG}.
+ * @param rawArgs - runner flags followed by `--` and the confined command.
+ * @returns the mirrored child exit code, or 127 for a runner-side failure.
+ */
+export async function runWindowsAclRunner(rawArgs: readonly string[] = process.argv.slice(2)): Promise<number> {
+  try {
+    return await main(rawArgs)
+  } catch (error: unknown) {
     if (!(error instanceof RunnerFailure)) {
       process.stderr.write(`${RUNNER_SIGNATURE}: ${error instanceof Error ? error.message : String(error)}\n`)
     }
-    process.exitCode = RUNNER_FAILURE_EXIT
-  },
-)
+    return RUNNER_FAILURE_EXIT
+  }
+}
+
+function isDirectInvocation(): boolean {
+  const invoked = process.argv[1]
+  if (invoked === undefined) return false
+  // Source launches can pass a relative entry path; SEA dispatch launches do
+  // not have the runner module as argv[1] and must remain import-only.
+  const modulePath = resolve(fileURLToPath(import.meta.url))
+  return process.platform === 'win32'
+    ? modulePath.toLowerCase() === resolve(invoked).toLowerCase()
+    : modulePath === resolve(invoked)
+}
+
+if (isDirectInvocation()) {
+  // Exit-code mirroring is full-width on Windows, verified empirically on
+  // this machine (Windows 11 build 26200, Node 24): a child that exits
+  // with the NTSTATUS 0xC0000005 (STATUS_ACCESS_VIOLATION) is read back
+  // by GetExitCodeProcess as the uint32 3221225477, and after
+  // process.exitCode = 3221225477 the parent observes exactly
+  // 3221225477 (spawnSync status). PowerShell's $LASTEXITCODE and cmd
+  // print the signed view (-1073741819), but no truncation or masking
+  // happens anywhere in the chain — the mirror contract holds for the
+  // full 32-bit range, so no re-mapping is needed.
+  process.exitCode = await runWindowsAclRunner()
+}
