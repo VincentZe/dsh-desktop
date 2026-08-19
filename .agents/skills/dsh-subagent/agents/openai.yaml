@@ -1,0 +1,4 @@
+interface:
+  display_name: "Run dsh subagent"
+  short_description: "Delegate bounded tasks to dsh subagents"
+  default_prompt: "Use $dsh-subagent to delegate this bounded task to the local dsh child runtime."

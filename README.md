@@ -1,57 +1,39 @@
-# DeepSeek Harness
+# dsh-desktop
 
 English | [中文](README.zh.md)
 
-DeepSeek Harness (`dsh`) is an open-source agent harness developed by [DeepSeek AI](https://deepseek.com).
+Windows desktop shell for DeepSeek Harness and [LunaUI](https://github.com/VincentZe/LunaUI).
 
-It uses an architecture where **everything is a plugin**, and is powered by [Cordis](https://github.com/cordiverse/cordis), whose design is described in [_A Programming Paradigm for Spatiotemporal Composability_](https://github.com/cordiverse/paper).
+![dsh-desktop](assets/readme/img1.jpg)
 
-## Developer preview
+## Highlights
 
-DeepSeek Harness is currently in _developer preview_ and is iterating rapidly. **THERE WILL BE COMPATIBILITY-BREAKING CHANGES.**
+- Borderless rounded native window.
+- No environment setup is required, but plugins cannot be installed.
+- Conversation management improvements including multi-select, batch operations, recycle-bin retention, and model thinking-mode configuration.
+- `dsh-subagent` can be called from Codex.
+
+## dsh subagent
+
+Install the portable package directly; it includes `dsh-subagent\SKILL.md`. It supports one-shot and persistent JSON-RPC runners, workspace grouping, lifecycle status, tool-error summaries, and caller-controlled interactions.
+
+More details: [desktop README](desktop/README.md) and [subagent cookbook](docs/cookbook/running-subagent.md).
 
 ## Run
 
-### Run from `npm`
-
-Install `Node.js`, then run:
-
-```sh
-npx @deepseek-ai/dsh web
-```
-
-The command starts the Web UI, served at `http://127.0.0.1:3080` by default. See [Web UI guide](docs/user/guide/index.md).
-
 ### Run from source
 
-To run from a repository checkout:
-
-```sh
-git clone https://github.com/deepseek-ai/deepseek-harness.git
-cd deepseek-harness
+```powershell
 pnpm install
 pnpm run build
 pnpm dsh web
 ```
 
-## Community and support
+### Build portable desktop
 
-- Feel free to submit feedback or bug reports through [GitHub Discussions](https://github.com/deepseek-ai/deepseek-harness/discussions).
-- Add the [`dsh-plugin`](https://github.com/topics/dsh-plugin) topic to your plugin repository for discoverability.
-- Join <a href="https://discord.gg/Ycq5dCaS4">DeepSeek Harness Discord community</a>.
+```powershell
+cd desktop
+.\build.ps1 -LunaUiDir <path-to-LunaUI> -WebView2Root <path-to-webview2-sdk>
+```
 
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Development
-
-Start with the [development guide](docs/development.md) and [architecture documentation](docs/architecture.md).
-
-For agents, follow [AGENTS.md](AGENTS.md).
-
-## License
-
-[MIT](LICENSE)
-
-Third-party dependencies and their licenses are disclosed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+The portable output is `desktop\build\portable`.

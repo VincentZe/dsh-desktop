@@ -53,9 +53,18 @@ Copy-Item -LiteralPath (Join-Path $build "Release\dsh-desktop.exe") -Destination
 Copy-Item -LiteralPath (Join-Path $build "Release\WebView2Loader.dll") -Destination $portable
 Copy-Item -LiteralPath (Join-Path $root "config.portable.json") -Destination (Join-Path $portable "config.json")
 
+$subagentSkillSource = Join-Path $repoRoot ".agents\skills\dsh-subagent"
+$subagentSkillDestination = Join-Path $portable ".agents\skills\dsh-subagent"
+if (-not (Test-Path -LiteralPath (Join-Path $subagentSkillSource "SKILL.md"))) {
+    Write-Error "Bundled dsh-subagent skill not found at $subagentSkillSource"
+}
+New-Item -ItemType Directory -Path (Split-Path -Parent $subagentSkillDestination) -Force | Out-Null
+Copy-Item -LiteralPath $subagentSkillSource -Destination $subagentSkillDestination -Recurse -Force
+
 Write-Host ""
 Write-Host "Portable package: $portable"
 Write-Host "Fixed Web runtime: $(Join-Path $portable "dsh\dsh-web.exe")"
+Write-Host "Bundled Codex skill: $(Join-Path $subagentSkillDestination "SKILL.md")"
 Write-Host ""
 Write-Host "Built: $build\Release\dsh-desktop.exe"
 Write-Host "Run: $portable\dsh-desktop.exe"

@@ -23,4 +23,6 @@ cd desktop
 
 portable 配置启动 `dsh\dsh-web.exe --port 0`，目标机器不需要安装系统 Node.js。
 
+portable 包内置 `.agents\skills\dsh-subagent\SKILL.md`，用户不需要单独下载 skill。该包仍然只提供 Web host；runner 入口以 skill 中的说明为准。
+
 发布后续事项：当前 portable 构建可能在内置 Web runtime 字符串中保留构建机和源码绝对路径。它不包含用户会话或凭据，但在将后续版本作为完全清理过的公开包发布前，应移除这些路径。

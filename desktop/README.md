@@ -23,4 +23,6 @@ Changing Cordis, a bundled plugin, or the fixed profile requires rebuilding the 
 
 The portable configuration launches `dsh\dsh-web.exe --port 0`; no system Node.js installation is required.
 
+The portable package includes `.agents\skills\dsh-subagent\SKILL.md`, so users do not need to download the skill separately. The package still exposes the Web host only; use the runner entry described by the skill.
+
 Release follow-up: the current portable build can retain absolute build and source paths in embedded Web runtime strings. They do not include user sessions or credentials, but should be removed before treating a future public package as fully sanitized.
