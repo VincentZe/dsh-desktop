@@ -127,7 +127,7 @@ export function SidebarRoot({
       }}
       onPointerLeave={() => { armLinger() }}
     >
-      <div className={css.logoRow}>
+      <div className={css.logoRow} data-dsh-window-drag="true">
         {/* Expanded, the wordmark doubles as a New Session shortcut; the
             collapsed rail's logo is the expand toggle below instead. */}
         {wide && (

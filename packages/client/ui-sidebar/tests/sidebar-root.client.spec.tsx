@@ -52,6 +52,7 @@ function mountShell({ collapsed = false, width = 300 }: { collapsed?: boolean; w
   )
   const view = render(root())
   return {
+    view,
     startSession,
     toggleSidebar,
     regionOwner: () => {
@@ -76,6 +77,7 @@ function mountShell({ collapsed = false, width = 300 }: { collapsed?: boolean; w
 describe('SidebarRoot shell', () => {
   it('routes New Session (capsule + wordmark) and the column toggle', () => {
     const b = mountShell()
+    expect(b.view.container.querySelector('[data-dsh-window-drag="true"]')).toBeTruthy()
     // Expanded, both the wordmark and the capsule start a session.
     const starters = screen.getAllByRole('button', { name: 'New session' })
     expect(starters).toHaveLength(2)

@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-08-19-page-edge-resize-handles.md
+2026-08-19-page-edge-resize-handles.md: d1c9e6f59eecb85f03a1c75c8c7069710f0f3909
+2026-08-19-page-edge-resize-handles.zh.md: 1c3fd091b0b2ac68e085320bffcc167dc85a1b9a

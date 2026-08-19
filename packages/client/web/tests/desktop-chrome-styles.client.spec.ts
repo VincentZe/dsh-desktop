@@ -15,4 +15,43 @@ describe('DesktopChrome styles', () => {
     expect(desktopChromeCss).toContain('--dsh-window-inset: 8px;')
     expect(desktopChromeCss).toContain('inset: 0;')
   })
+
+  it('does not install a transparent top overlay for dragging', () => {
+    expect(desktopChromeCss).not.toContain('.dragRegion')
+    expect(desktopChromeCss).toContain('[data-dsh-window-drag="true"]')
+  })
+
+  it('draws a non-interactive fading inner top affordance', () => {
+    expect(desktopChromeCss).toContain('.window::before')
+    expect(desktopChromeCss).toContain('mask-image: linear-gradient(180deg')
+    expect(desktopChromeCss).toContain('box-shadow:')
+    expect(desktopChromeCss).toContain('pointer-events: none;')
+    expect(desktopChromeCss).toContain('.window[data-drag-hover]::before')
+  })
+
+  it('draws pointer-following hover and active resize feedback without a hit-test overlay', () => {
+    expect(desktopChromeCss).toContain('.window::after')
+    expect(desktopChromeCss).toContain('[data-resize-hover]::after')
+    expect(desktopChromeCss).toContain('[data-resize-active]::after')
+    expect(desktopChromeCss).toContain('--dsh-resize-x')
+    expect(desktopChromeCss).toContain('--dsh-resize-mask-size: 320px')
+    expect(desktopChromeCss).toContain('--dsh-resize-mask-size: 380px')
+    expect(desktopChromeCss).toContain('mask-composite: exclude, intersect;')
+    expect(desktopChromeCss).toContain('z-index: 2000;')
+    expect(desktopChromeCss).toContain('pointer-events: none;')
+  })
+
+  it('uses directional cursors for all resize edges', () => {
+    expect(desktopChromeCss).toContain('data-resize-hover="left"] *')
+    expect(desktopChromeCss).toContain('cursor: ew-resize;')
+    expect(desktopChromeCss).toContain('cursor: ns-resize;')
+    expect(desktopChromeCss).toContain('cursor: nwse-resize;')
+    expect(desktopChromeCss).toContain('cursor: nesw-resize;')
+  })
+
+  it('keeps minimize and maximize glyphs high-contrast on hover and focus', () => {
+    expect(desktopChromeCss).toContain('.control.minimize:hover,')
+    expect(desktopChromeCss).toContain('.control.maximize:focus-visible {')
+    expect(desktopChromeCss).toContain('color: #fff;')
+  })
 })

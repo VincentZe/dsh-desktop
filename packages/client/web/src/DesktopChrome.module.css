@@ -9,20 +9,147 @@
   border-radius: 14px;
   --dsh-window-inset: 8px;
   --dsh-window-utility-clearance: 104px;
+  --dsh-resize-x: 0px;
+  --dsh-resize-y: 0px;
+  --dsh-resize-halo-size: 64px;
+  --dsh-resize-mask-size: 320px;
+  isolation: isolate;
   background: var(--dsw-alias-bg-base, #0e0f13);
   color: var(--dsw-alias-label-primary, #e7eaf0);
   box-shadow: 0 2px 8px rgb(0 0 0 / 30%);
 }
 
-.dragRegion {
+/* The native move affordance is visual only. It fades away from the inner
+   top edge and never participates in hit testing, so the declared drag
+   containers remain the only pointer source for window movement. */
+.window::before {
   position: absolute;
   inset: 0 0 auto;
   z-index: 1;
-  height: 48px;
+  height: 68px;
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-state-business-primary, #5b7cff) 16%, transparent);
+  border-bottom: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--dsw-alias-state-business-primary, #5b7cff) 7%, transparent) 0%,
+    color-mix(in srgb, var(--dsw-alias-state-business-primary, #5b7cff) 3%, transparent) 36%,
+    transparent 100%
+  );
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--dsw-alias-state-business-primary, #5b7cff) 38%, transparent),
+    inset 0 0 14px color-mix(in srgb, var(--dsw-alias-state-business-primary, #5b7cff) 12%, transparent),
+    inset 0 -18px 18px -18px color-mix(in srgb, var(--dsw-alias-state-business-primary, #5b7cff) 28%, transparent);
+  content: '';
+  opacity: 0;
+  pointer-events: none;
+  mask-image: linear-gradient(180deg, #000 0%, #000 22%, transparent 100%);
+  transition: opacity 180ms ease;
+}
+
+/* The resize glow follows the pointer without creating another hit-test layer.
+   Pointer events stay on the page's real controls; the shell root delegates
+   only empty edge pixels to the native resize protocol. */
+.window::after {
+  position: absolute;
+  inset: 0;
+  z-index: 2000;
+  border: 14px solid transparent;
+  border-radius: inherit;
+  background: radial-gradient(
+    circle var(--dsh-resize-halo-size) at var(--dsh-resize-x) var(--dsh-resize-y),
+    color-mix(in srgb, var(--dsw-alias-state-business-primary, #5b7cff) 28%, transparent),
+    transparent 74%
+  );
+  box-shadow:
+    inset 0 0 22px color-mix(in srgb, var(--dsw-alias-state-business-primary, #5b7cff) 26%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--dsw-alias-state-business-primary, #5b7cff) 24%, transparent);
+  content: '';
+  opacity: 0;
+  pointer-events: none;
+  mask:
+    linear-gradient(#000 0 0) border-box,
+    linear-gradient(#000 0 0) padding-box,
+    radial-gradient(circle var(--dsh-resize-mask-size) at var(--dsh-resize-x) var(--dsh-resize-y), #000 0%, #000 72%, transparent 100%) border-box;
+  mask-composite: exclude, intersect;
+  transition: opacity 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.window[data-resize-hover]::after {
+  opacity: 1;
+  border-color: color-mix(in srgb, var(--dsw-alias-state-business-primary, #5b7cff) 54%, transparent);
+}
+
+.window[data-resize-active]::after {
+  opacity: 1;
+  border-color: var(--dsw-alias-state-business-primary, #5b7cff);
+  --dsh-resize-halo-size: 76px;
+  --dsh-resize-mask-size: 380px;
+  background: radial-gradient(
+    circle var(--dsh-resize-halo-size) at var(--dsh-resize-x) var(--dsh-resize-y),
+    color-mix(in srgb, var(--dsw-alias-state-business-primary, #5b7cff) 48%, transparent),
+    transparent 72%
+  );
+  box-shadow:
+    inset 0 0 28px color-mix(in srgb, var(--dsw-alias-state-business-primary, #5b7cff) 46%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--dsw-alias-state-business-primary, #5b7cff) 76%, transparent);
+}
+
+.window[data-resize-hover="left"],
+.window[data-resize-hover="left"] *,
+.window[data-resize-active="left"],
+.window[data-resize-active="left"] *,
+.window[data-resize-hover="right"],
+.window[data-resize-hover="right"] *,
+.window[data-resize-active="right"],
+.window[data-resize-active="right"] * {
+  cursor: ew-resize;
+}
+
+.window[data-resize-hover="top"],
+.window[data-resize-hover="top"] *,
+.window[data-resize-active="top"],
+.window[data-resize-active="top"] *,
+.window[data-resize-hover="bottom"],
+.window[data-resize-hover="bottom"] *,
+.window[data-resize-active="bottom"],
+.window[data-resize-active="bottom"] * {
+  cursor: ns-resize;
+}
+
+.window[data-resize-hover="top-left"],
+.window[data-resize-hover="top-left"] *,
+.window[data-resize-active="top-left"],
+.window[data-resize-active="top-left"] *,
+.window[data-resize-hover="bottom-right"],
+.window[data-resize-hover="bottom-right"] *,
+.window[data-resize-active="bottom-right"],
+.window[data-resize-active="bottom-right"] * {
+  cursor: nwse-resize;
+}
+
+.window[data-resize-hover="top-right"],
+.window[data-resize-hover="top-right"] *,
+.window[data-resize-active="top-right"],
+.window[data-resize-active="top-right"] *,
+.window[data-resize-hover="bottom-left"],
+.window[data-resize-hover="bottom-left"] *,
+.window[data-resize-active="bottom-left"],
+.window[data-resize-active="bottom-left"] * {
+  cursor: nesw-resize;
+}
+
+.window[data-maximized]::after { opacity: 0; }
+
+.window[data-drag-hover]::before {
+  opacity: 1;
+}
+
+.window :global([data-dsh-window-drag="true"]) {
   cursor: grab;
 }
 
-.dragRegion:active {
+.window :global([data-dsh-window-drag="true"]:active) {
   cursor: grabbing;
 }
 
@@ -36,7 +163,7 @@
   position: absolute;
   top: 12px;
   right: 12px;
-  z-index: 2;
+  z-index: 2100;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -64,6 +191,13 @@
   box-shadow: 0 10px 20px color-mix(in srgb, var(--dsw-alias-brand-primary, #3964fe) 20%, transparent);
   color: var(--dsw-alias-brand-primary, #6c8bff);
   outline: none;
+}
+
+.control.minimize:hover,
+.control.minimize:focus-visible,
+.control.maximize:hover,
+.control.maximize:focus-visible {
+  color: #fff;
 }
 
 .control:active {
@@ -163,5 +297,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .control { transition: none; }
+  .control,
+  .window::before,
+  .window::after { transition: none; }
 }

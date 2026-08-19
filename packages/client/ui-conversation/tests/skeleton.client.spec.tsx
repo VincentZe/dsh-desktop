@@ -331,6 +331,7 @@ describe('ConversationRoot resident composer', () => {
     expect(host).not.toBeNull()
     expect(seat).not.toBeNull()
     expect(header).not.toBeNull()
+    expect(header?.getAttribute('data-dsh-window-drag')).toBe('true')
     // Header is column chrome above the scrollport; the seat sticks inside it.
     expect(host?.contains(header)).toBe(false)
     expect(host?.contains(seat)).toBe(true)

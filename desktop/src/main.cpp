@@ -186,6 +186,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
   shell_config.resizable = true;
   shell_config.maximizable = true;
   shell_config.resize_border = 8;
+  shell_config.native_resize_hit_test = false;
   shell_config.rounded_corners = true;
   shell_config.transparent_background = true;
   shell_config.background_color = RGB(14, 15, 19);
