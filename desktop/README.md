@@ -25,4 +25,17 @@ The portable configuration launches `dsh\dsh-web.exe --port 0`; no system Node.j
 
 The portable package includes `.agents\skills\dsh-subagent\SKILL.md`, so users do not need to download the skill separately. The package still exposes the Web host only; use the runner entry described by the skill.
 
+## Installing Cordis plugins
+
+Unlike a regular `dsh` installation, the portable package is a **fixed runtime**: `runFixedWebProfile` does not consult `$DSH_HOME/cordis.patch.yml` or any user profile, so a plugin installed via `npm --prefix ~/.dsh install <plugin>` is never loaded. There are three ways to add a plugin to the portable package:
+
+1. **Rebuild the package (official, persistent).** Add the plugin to the runtime composition — a loader entry in `dsh-web-runtime/config/agent-presets/*/agent.cordis.yml` (or a fixed-web patch) plus its package in the pruned closure via `desktop/build-runtime.ts` — then rerun `build.ps1` / `build-runtime.ts`. This is the only supported path; the shipped presets already load this way (see `presetLoaderRoots` in `build-runtime.ts`).
+2. **Runtime manual extension (works until the next rebuild).** Drop the plugin package (and its third-party dependencies) into `dsh-web-runtime/node_modules` and add a loader entry to `dsh-web-runtime/config/agent-presets/*/agent.cordis.yml`. Node module resolution walks up from the runtime's own config directory, so the entry resolves. A rebuild of the portable package wipes the sidecar and undoes this.
+3. **Session-scoped experiments.** The `cordis` preset's `tool-cordis` can mount a temporary plugin into the live runtime. It is model-driven, non-persistent, and a trust boundary — treat it as shell access.
+
+Constraints:
+
+- **Dependency singletons.** A plugin that pulls its own copy of `@deepseek-ai/*` packages (cordis, tools, session, ...) gets a second instance with mismatched service identities; `ctx.get` cannot reach host services. Plugins must stay self-contained or reuse the runtime's closure.
+- **Pruned closure.** `build-runtime.ts` prunes `dsh-web-runtime/node_modules` to the `webRuntimeRoots` + `presetLoaderRoots` closure plus static imports. Third-party dependencies of a plugin are not inside it and must be shipped alongside the plugin (option 2) or added to the closure (option 1).
+
 Release follow-up: the current portable build can retain absolute build and source paths in embedded Web runtime strings. They do not include user sessions or credentials, but should be removed before treating a future public package as fully sanitized.
