@@ -64,6 +64,23 @@ const webRuntimeRoots = [
   'node-addon-require-builtin',
 ] as const
 
+/**
+ * Packages referenced only by the `name:` loader entries of the shipped
+ * agent-preset compositions (the files under `config/agent-presets/`), not
+ * by any manifest inside the webRuntimeRoots closure. pruneRuntimeDependencies
+ * must keep them alongside the roots, or mounting a preset fails at runtime
+ * with "Cannot find package '@deepseek-ai/...'".
+ */
+const presetLoaderRoots = [
+  '@deepseek-ai/dsh-agent-tool-presentation',
+  '@deepseek-ai/dsh-persona',
+  '@deepseek-ai/dsh-terminal',
+  '@deepseek-ai/dsh-terminal-bash',
+  '@deepseek-ai/dsh-tool-ask-user',
+  '@deepseek-ai/dsh-tool-bash-persistent',
+  '@deepseek-ai/dsh-tool-cordis',
+] as const
+
 function pnpmBin(): string {
   return process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 }
@@ -284,7 +301,7 @@ async function addBuiltImports(required: Set<string>): Promise<void> {
 
 /** Traverse only the package closure owned by the fixed Web composition. */
 async function pruneRuntimeDependencies(): Promise<void> {
-  const requiredTopLevel = new Set<string>(webRuntimeRoots)
+  const requiredTopLevel = new Set<string>([...webRuntimeRoots, ...presetLoaderRoots])
   await addBuiltImports(requiredTopLevel)
   const queue: Array<{ name: string, path: string }> = []
   for (const name of requiredTopLevel) {
