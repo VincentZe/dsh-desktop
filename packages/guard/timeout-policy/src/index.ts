@@ -65,7 +65,25 @@ export function apply(ctx: Context): void {
     const upstream = exec.signal
     exec.signal = d.signal
     try {
-      const result = await next()
+      // Cooperative path: `next()` settles on its own — usually in response to
+      // the deadline signal — and the wrapper replaces its result when the
+      // deadline fired. A tool that NEVER settles (a subprocess tree that
+      // survived termination, a hung native call) would hold the turn open
+      // forever with no tool/result ever persisted. Race a hard fallback on
+      // the same budget so the caller always hears a TOOL_TIMEOUT and the
+      // agent loop can continue; the underlying promise is not abandoned —
+      // the deadline signal it already received asks it to terminate — and
+      // the fallback timer is cleared whenever `next()` wins the race.
+      let hardTimer: ReturnType<typeof setTimeout> | undefined
+      const hardFallback = timeoutMs > 0
+        ? new Promise<ToolExecutionResult>((resolve) => {
+          hardTimer = setTimeout(() => { resolve(toolTimeoutResult(timeoutMs)) }, timeoutMs)
+        })
+        : undefined
+      const result = hardFallback === undefined
+        ? await next()
+        : await Promise.race([next(), hardFallback])
+      if (hardTimer !== undefined) clearTimeout(hardTimer)
       // If OUR timer fired (scoped by code — a nested outer deadline reads as
       // undefined here), the tool/capability saw the abort and reached
       // quiescence; replace whatever it returned (its own abort result) with the

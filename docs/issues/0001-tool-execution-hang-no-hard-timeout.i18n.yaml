@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write docs/issues/0001-tool-execution-hang-no-hard-timeout.md
-0001-tool-execution-hang-no-hard-timeout.md: 87cd5695d2f78c294ab5af7fc3bccbe44d1e1f60
-0001-tool-execution-hang-no-hard-timeout.zh.md: 6e85e821812eaa66dbf5f8440d00ac9cd5da6231
+0001-tool-execution-hang-no-hard-timeout.md: 79e0f7122d9ceb30799895862940773c7e50baf3
+0001-tool-execution-hang-no-hard-timeout.zh.md: caed23f3e866e8c72c1a480c1f4c824984ef9ddb

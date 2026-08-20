@@ -242,3 +242,44 @@ describe('dsh-tool-call-timeout-policy real-load-path guard', () => {
     await fiber.dispose()
   })
 })
+
+describe('timeout-policy hard fallback (tool never settles)', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+
+  /** A tool that ignores the deadline signal entirely and never settles. */
+  const stubbornTool = defineContentToolFixture({
+    name: 'stubborn', description: 'never settles, ignores abort', parameters: {}, timeoutMs: 100,
+    execute(): Promise<never> {
+      return new Promise(() => { /* never settles: no abort listener, no resolution */ })
+    },
+  })
+
+  it('returns TOOL_TIMEOUT when the tool never settles, instead of hanging forever', async () => {
+    const ctx = await setup()
+    ctx.tools.register(stubbornTool)
+    const pending = ctx.tools.execute({ signal: testToolSignal, callId: CallId('c1'), name: 'stubborn', arguments: {} })
+    // Without the hard fallback this promise would stay pending forever:
+    // neither the tool nor the registry settles it on the deadline signal.
+    await vi.advanceTimersByTimeAsync(150)
+    const result = await pending
+    expect(result).toEqual({
+      content: [{ type: 'text', text: 'Error: tool call timed out after 100ms' }],
+      isError: true,
+      error: {
+        message: 'tool call timed out after 100ms',
+        info: { name: 'ToolTimeoutError', code: 'TOOL_TIMEOUT' },
+      },
+    })
+  })
+
+  it('clears the hard fallback timer when the tool settles before the deadline', async () => {
+    const ctx = await setup()
+    ctx.tools.register(defineContentToolFixture({ name: 'fast', description: 'd', parameters: {}, timeoutMs: 10_000,
+      async execute() { return [{ type: 'text' as const, text: 'ok' }] } }))
+    const result = await ctx.tools.execute({ signal: testToolSignal, callId: CallId('c2'), name: 'fast', arguments: {} })
+    expect(result.isError).toBe(false)
+    // The fallback timer (and the deadline timer) must not leak past a fast settlement.
+    expect(vi.getTimerCount()).toBe(0)
+  })
+})

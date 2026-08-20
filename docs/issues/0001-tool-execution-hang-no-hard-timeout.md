@@ -2,7 +2,7 @@
 
 English | [中文](0001-tool-execution-hang-no-hard-timeout.zh.md)
 
-Status: open
+Status: partially fixed — the hard fallback landed on 2026-08-20 (	imeout-policy); tree-termination hardening is still open
 
 ## Summary
 

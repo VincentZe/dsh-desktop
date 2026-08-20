@@ -2,7 +2,7 @@
 
 [English](0001-tool-execution-hang-no-hard-timeout.md) | 中文
 
-状态：open（未解决）
+状态：部分修复——硬兜底已于 2026-08-20 落地（	imeout-policy）；进程树终止加固仍待处理
 
 ## 摘要
 
