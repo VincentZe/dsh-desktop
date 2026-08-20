@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
-const desktopChromeCss = readFileSync(fileURLToPath(new URL('../src/DesktopChrome.module.css', import.meta.url)), 'utf8')
+const desktopChromeCss = readFileSync(fileURLToPath(new URL('../src/client/DesktopChrome.module.css', import.meta.url)), 'utf8')
 
 describe('DesktopChrome styles', () => {
   it('reserves a transparent outer ring for the native window shadow', () => {

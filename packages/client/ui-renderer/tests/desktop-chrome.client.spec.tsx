@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render } from '@testing-library/react'
-import { DesktopChrome } from '../src/DesktopChrome.tsx'
+import { DesktopChrome } from '../src/client/DesktopChrome.tsx'
 
 interface FakeBridge {
   addEventListener(type: 'message', listener: (event: MessageEvent<unknown>) => void): void

@@ -5,6 +5,7 @@
 import type { ReactNode } from 'react'
 import type { Context } from '@deepseek-ai/cordis'
 import { bindSnapshotSelector } from './bind.ts'
+import { DesktopChrome } from './DesktopChrome.tsx'
 import { DocumentTitle } from './DocumentTitle.tsx'
 import type {} from '@deepseek-ai/dsh-client-runtime/client'
 
@@ -32,9 +33,9 @@ export function buildRenderApp(deps: AssemblyDeps): () => ReactNode {
     return <DocumentTitle {...title === undefined ? {} : { title }} />
   }
   return () => (
-    <>
+    <DesktopChrome>
       <SessionDocumentTitle />
       {ctx.slots.renderSlot('root', {})}
-    </>
+    </DesktopChrome>
   )
 }
